@@ -38,13 +38,29 @@ class VerifiedArtifactStore(
         }
     }
 
+    fun verifyCached(request: ArtifactRequest): ResolvedArtifact {
+        validateRequest(request)
+        try {
+            if (!Files.exists(request.destination)) throw MissingArtifactException(request.name, request.destination)
+            if (!Files.isRegularFile(request.destination)) {
+                throw ResolutionException("Cache entry for '${request.name}' is not a regular file: ${request.destination}")
+            }
+            ArtifactVerifier.requireMatches(request)
+            return ResolvedArtifact(request, request.destination, ArtifactOrigin.CACHE)
+        } catch (exception: ResolutionException) {
+            throw exception
+        } catch (exception: IOException) {
+            throw ResolutionException("Filesystem failure while verifying '${request.name}' at ${request.destination}: ${exception.message}", exception)
+        }
+    }
+
     private fun resolveWhileLocked(request: ArtifactRequest): ResolvedArtifact {
         var replacedCorruptEntry = false
         if (Files.exists(request.destination)) {
             if (!Files.isRegularFile(request.destination)) {
                 throw ResolutionException("Cache entry for '${request.name}' is not a regular file: ${request.destination}")
             }
-            if (inspect(request.destination).matches(request)) {
+            if (ArtifactVerifier.inspect(request.destination).matches(request)) {
                 return ResolvedArtifact(request, request.destination, ArtifactOrigin.CACHE)
             }
             Files.delete(request.destination)
@@ -54,7 +70,7 @@ class VerifiedArtifactStore(
         val partial = Files.createTempFile(partialDirectory, "${request.expectedSha1}.", ".part")
         try {
             fetcher.fetch(request.name, request.uri, partial)
-            val actual = inspect(partial)
+            val actual = ArtifactVerifier.inspect(partial)
             if (!actual.matches(request)) {
                 throw IntegrityException(
                     artifactName = request.name,
@@ -110,26 +126,6 @@ class VerifiedArtifactStore(
         val relativePath = root.relativize(destination.toAbsolutePath().normalize()).toString()
         val digest = MessageDigest.getInstance("SHA-256").digest(relativePath.toByteArray(StandardCharsets.UTF_8))
         return HexFormat.of().formatHex(digest)
-    }
-
-    private fun inspect(path: Path): ActualArtifact {
-        val digest = MessageDigest.getInstance("SHA-1")
-        var size = 0L
-        Files.newInputStream(path).use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-                size += read
-            }
-        }
-        return ActualArtifact(HexFormat.of().formatHex(digest.digest()), size)
-    }
-
-    private data class ActualArtifact(val sha1: String, val size: Long) {
-        fun matches(request: ArtifactRequest): Boolean =
-            sha1.equals(request.expectedSha1, ignoreCase = true) && size == request.expectedSize
     }
 
     private companion object {

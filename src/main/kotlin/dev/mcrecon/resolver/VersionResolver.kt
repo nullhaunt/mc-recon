@@ -17,10 +17,27 @@ class VersionResolver(
     private val assetBaseUri: URI = URI("https://resources.download.minecraft.net/"),
 ) {
     fun resolve(manifest: VersionManifest, platform: HostPlatform, includeAssetObjects: Boolean = false): ResolvedVersion {
-        val client = artifactStore.resolve(
+        return resolveWith(manifest, platform, includeAssetObjects, artifactStore::resolve)
+    }
+
+    /** Loads a version exclusively from already verified cache entries. No network access is possible. */
+    fun resolveCached(manifest: VersionManifest, platform: HostPlatform, includeAssetObjects: Boolean = false): ResolvedVersion =
+        resolveWith(manifest, platform, includeAssetObjects, artifactStore::verifyCached)
+
+    fun resolveServerCached(manifest: VersionManifest): ResolvedArtifact = artifactStore.verifyCached(
+        manifest.serverDownload.toRequest("Minecraft ${manifest.id} server", cacheLayout.versionArtifact(manifest.id, "server.jar")),
+    )
+
+    private fun resolveWith(
+        manifest: VersionManifest,
+        platform: HostPlatform,
+        includeAssetObjects: Boolean,
+        resolveArtifact: (ArtifactRequest) -> ResolvedArtifact,
+    ): ResolvedVersion {
+        val client = resolveArtifact(
             manifest.clientDownload.toRequest("Minecraft ${manifest.id} client", cacheLayout.versionArtifact(manifest.id, "client.jar")),
         )
-        val server = artifactStore.resolve(
+        val server = resolveArtifact(
             manifest.serverDownload.toRequest("Minecraft ${manifest.id} server", cacheLayout.versionArtifact(manifest.id, "server.jar")),
         )
 
@@ -34,7 +51,7 @@ class VersionResolver(
                 ResolvedLibraryArtifact(
                     role = artifact.role,
                     classifier = artifact.classifier,
-                    file = artifactStore.resolve(
+                    file = resolveArtifact(
                         artifact.download.toRequest(
                             "library ${selected.library.name}${artifact.classifier?.let { " ($it)" }.orEmpty()}",
                             cacheLayout.libraryArtifact(manifestPath),
@@ -45,7 +62,7 @@ class VersionResolver(
             ResolvedLibrary(selected.library, artifacts)
         }
 
-        val resolvedAssetIndexFile = artifactStore.resolve(
+        val resolvedAssetIndexFile = resolveArtifact(
             manifest.assetIndex.toRequest(
                 "asset index ${manifest.assetIndex.id}",
                 cacheLayout.assetIndex(manifest.assetIndex.id),
@@ -59,7 +76,7 @@ class VersionResolver(
             ResolvedLoggingConfiguration(
                 name = name,
                 metadata = configuration,
-                file = artifactStore.resolve(
+                file = resolveArtifact(
                     configuration.file.toRequest(
                         "logging configuration $name",
                         cacheLayout.loggingFile(id),
@@ -69,7 +86,7 @@ class VersionResolver(
         }
 
         val assetObjects = if (includeAssetObjects) {
-            AssetObjectResolver(cacheLayout, artifactStore, assetBaseUri).resolveAll(assetIndexDocument)
+            AssetObjectResolver(cacheLayout, artifactStore, assetBaseUri).resolveAll(assetIndexDocument, resolveArtifact)
         } else {
             emptyMap()
         }

@@ -10,6 +10,7 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class McReconCliTest {
@@ -83,6 +84,80 @@ class McReconCliTest {
             assertTrue(Files.exists(cachePath.resolve("versions/cli-test/client.jar")))
             assertTrue(Files.exists(cachePath.resolve("assets/indexes/cli-assets.json")))
         }
+    }
+
+    @Test
+    fun `client launch command works without session flags and username can be supplied alone`() {
+        val cachePath = temporaryDirectory.resolve("launch-cache")
+        val manifestPath = writeCachedLaunchFixture(cachePath)
+
+        fun launch(vararg options: String): Pair<Int, Pair<String, String>> {
+            val stdout = ByteArrayOutputStream()
+            val stderr = ByteArrayOutputStream()
+            val exit = McReconCli().run(
+                arrayOf("launch-command", manifestPath.toString(), "client", "--cache-dir", cachePath.toString(), *options),
+                PrintWriter(stdout),
+                PrintWriter(stderr),
+            )
+            return exit to (stdout.toString() to stderr.toString())
+        }
+
+        val defaultLaunch = launch()
+        val namedLaunch = launch("--username", "Dinnerbone")
+
+        assertEquals(0, defaultLaunch.first)
+        assertEquals("", defaultLaunch.second.second)
+        assertContains(defaultLaunch.second.first, "mc-recon-player")
+        assertContains(defaultLaunch.second.first, "<redacted>")
+        assertFalse(defaultLaunch.second.first.contains("] --demo"))
+        assertEquals(0, namedLaunch.first)
+        assertEquals("", namedLaunch.second.second)
+        assertContains(namedLaunch.second.first, "Dinnerbone")
+        assertFalse(namedLaunch.second.first.contains("client launch requires"))
+    }
+
+    private fun writeCachedLaunchFixture(cachePath: Path): Path {
+        val client = "client".toByteArray()
+        val server = "server".toByteArray()
+        val assetIndex = "{\"objects\":{}}".toByteArray()
+        Files.createDirectories(cachePath.resolve("versions/launch-test"))
+        Files.createDirectories(cachePath.resolve("assets/indexes"))
+        Files.write(cachePath.resolve("versions/launch-test/client.jar"), client)
+        Files.write(cachePath.resolve("versions/launch-test/server.jar"), server)
+        Files.write(cachePath.resolve("assets/indexes/launch-assets.json"), assetIndex)
+        val manifestPath = temporaryDirectory.resolve("launch-version.json")
+        Files.writeString(
+            manifestPath,
+            """
+                {
+                  "id":"launch-test",
+                  "type":"snapshot",
+                  "time":"2026-01-01T00:00:00Z",
+                  "releaseTime":"2026-01-01T00:00:00Z",
+                  "downloads":{
+                    "client":${download("https://example.invalid/client.jar", client)},
+                    "server":${download("https://example.invalid/server.jar", server)}
+                  },
+                  "assetIndex":{
+                    "id":"launch-assets","sha1":"${sha1(assetIndex)}","size":${assetIndex.size},"totalSize":0,
+                    "url":"https://example.invalid/assets.json"
+                  },
+                  "assets":"launch-assets",
+                  "javaVersion":{"component":"java-runtime-test","majorVersion":25},
+                  "libraries":[],
+                  "arguments":{
+                    "jvm":[],
+                    "game":[
+                      "--username","${'$'}{auth_player_name}",
+                      "--uuid","${'$'}{auth_uuid}",
+                      "--accessToken","${'$'}{auth_access_token}"
+                    ]
+                  },
+                  "mainClass":"example.Main"
+                }
+            """.trimIndent(),
+        )
+        return manifestPath
     }
 
     private fun download(url: String, bytes: ByteArray): String =

@@ -52,3 +52,51 @@ An installed distribution provides the conceptual command directly:
 The manifest parser retains Mojang's ordered rules and conditional argument
 structures. Library applicability is evaluated for the current operating system,
 architecture, and OS version; feature flags default to false for `inspect`.
+
+## Runtime commands
+
+Build and inspect the exact argument vector without starting Minecraft:
+
+```bash
+./gradlew run --args="launch-command fixtures/26.3-rc-2.json client --demo"
+./gradlew run --args="launch-command fixtures/26.3-rc-2.json server"
+```
+
+Run the original verified artifacts with inherited terminal input and output:
+
+```bash
+./gradlew run --args="run fixtures/26.3-rc-2.json client --demo"
+./gradlew run --args="run fixtures/26.3-rc-2.json server"
+```
+
+Runtime commands are cache-only: they never download implicitly. A client run checks
+every object in the asset index first; resolve missing objects explicitly with
+`resolve <manifest> --assets`. The default client and server game directories live
+under `.mc-recon/runtime/<version>/<platform>/run/`, never the user's normal
+`.minecraft` directory. Use `--cache-dir` and `--game-dir` to override these paths.
+
+The selected Java executable is `--java <path>` when supplied, otherwise the Java
+runtime currently executing `mc-recon`. Its major version must exactly match the
+manifest (Java 25 for `26.3-rc-2`); `--allow-java-version-mismatch` is an explicit
+escape hatch. Client default-user JVM arguments come from the manifest and can be
+disabled with `--no-default-jvm-args`. Effective client ordering is default-user JVM
+arguments, manifest JVM arguments, manifest logging argument, main class, then
+manifest game arguments.
+
+Client commands without session options use clearly synthetic, unauthenticated
+placeholder values; `--username` may be supplied independently. `--demo` additionally
+enables the manifest's demo feature and `--demo` game argument. Authentication is
+intentionally not implemented. Advanced callers may independently override the
+ephemeral `--username`, `--uuid`, and `--access-token` fields (plus optional
+`--client-id` and `--xuid`); they are not persisted and access tokens are redacted by
+`launch-command`. Native extraction is content-keyed, excludes unsafe ZIP paths and
+`META-INF`, and is reused only while its source hashes and extracted outputs match.
+Legacy artifacts selected through a manifest `natives` map are extracted and omitted
+from the normal classpath. A classifier supplied as a library's primary
+`downloads.artifact` remains on the classpath because that placement is explicit in
+modern Mojang metadata.
+
+The server command executes the published JAR with `nogui` by default. It never
+creates or changes `eula.txt`; accepting Mojang's EULA remains an explicit user
+action in the selected server directory. Additional server arguments can be passed
+after `--`.

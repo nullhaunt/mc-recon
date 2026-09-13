@@ -8,6 +8,14 @@ import dev.mcrecon.manifest.rules.HostPlatformDetector
 import dev.mcrecon.manifest.rules.RuleContext
 import dev.mcrecon.manifest.rules.RuleEvaluator
 import dev.mcrecon.manifest.rules.UnsupportedPlatformException
+import dev.mcrecon.launcher.ClientLaunchBuilder
+import dev.mcrecon.launcher.ClientLaunchOptions
+import dev.mcrecon.launcher.ClientSession
+import dev.mcrecon.launcher.LaunchCommandRenderer
+import dev.mcrecon.launcher.LaunchException
+import dev.mcrecon.launcher.LaunchSide
+import dev.mcrecon.launcher.ProcessLauncher
+import dev.mcrecon.launcher.ServerLaunchOptions
 import dev.mcrecon.resolver.ArtifactOrigin
 import dev.mcrecon.resolver.CacheLayout
 import dev.mcrecon.resolver.LibraryArtifactRole
@@ -15,6 +23,9 @@ import dev.mcrecon.resolver.ResolutionException
 import dev.mcrecon.resolver.ResolvedArtifact
 import dev.mcrecon.resolver.ResolvedVersion
 import dev.mcrecon.resolver.VersionResolver
+import dev.mcrecon.runtime.RuntimePreparationException
+import dev.mcrecon.runtime.RuntimePreparer
+import dev.mcrecon.runtime.RuntimeSelectionOptions
 import java.io.PrintWriter
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -22,6 +33,7 @@ import java.nio.file.Path
 class McReconCli(
     private val parser: ManifestParser = ManifestParser(),
     private val platformDetector: HostPlatformDetector = HostPlatformDetector(),
+    private val processLauncher: ProcessLauncher = ProcessLauncher(),
 ) {
     fun run(arguments: Array<String>, out: PrintWriter, err: PrintWriter): Int {
         if (arguments.contentEquals(arrayOf("--help")) || arguments.contentEquals(arrayOf("-h"))) {
@@ -33,6 +45,8 @@ class McReconCli(
             when (arguments.firstOrNull()) {
                 "inspect" -> runInspect(arguments, out)
                 "resolve" -> runResolve(arguments, out)
+                "launch-command" -> runLaunch(arguments, out, execute = false)
+                "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
                 else -> throw CliUsageException("unknown command '${arguments[0]}'")
             }
@@ -46,12 +60,127 @@ class McReconCli(
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: ResolutionException) {
             fail(err, 2, "error: ${exception.message}")
+        } catch (exception: LaunchException) {
+            fail(err, 2, "error: ${exception.message}")
+        } catch (exception: RuntimePreparationException) {
+            fail(err, 2, "error: ${exception.message}")
         } catch (exception: UnsupportedPlatformException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: Exception) {
             fail(err, 1, "internal error: ${exception.message ?: exception::class.simpleName}")
         }
     }
+
+    private fun runLaunch(arguments: Array<String>, out: PrintWriter, execute: Boolean): Int {
+        if (arguments.size < 3) throw CliUsageException("${arguments.firstOrNull()} requires a manifest path and client or server")
+        val side = when (arguments[2]) {
+            "client" -> LaunchSide.CLIENT
+            "server" -> LaunchSide.SERVER
+            else -> throw CliUsageException("launch side must be 'client' or 'server'")
+        }
+        val parsed = parseLaunchOptions(arguments, side)
+        val manifestPath = Path.of(arguments[1])
+        val manifest = parser.read(manifestPath)
+        val platform = platformDetector.detect()
+        val layout = CacheLayout(parsed.cacheDirectory)
+        val preparer = RuntimePreparer(layout)
+        val runtime = RuntimeSelectionOptions(parsed.javaExecutable, parsed.allowJavaMismatch)
+
+        return when (side) {
+            LaunchSide.CLIENT -> {
+                val session = parsed.clientSession()
+                val gameDirectory = parsed.gameDirectory
+                    ?: layout.defaultGameDirectory(manifest.id, platform, "client")
+                val preparation = preparer.prepareClient(
+                    manifest,
+                    platform,
+                    runtime,
+                    ClientLaunchOptions(
+                        gameDirectory = gameDirectory,
+                        session = session,
+                        demo = parsed.demo,
+                        useDefaultJvmArguments = !parsed.noDefaultJvmArguments,
+                        width = parsed.width,
+                        height = parsed.height,
+                    ),
+                )
+                if (!execute) {
+                    out.println(LaunchCommandRenderer.render(preparation.specification))
+                    out.println()
+                    out.println(
+                        if (preparation.assets.complete) "Asset preflight: complete (${preparation.assets.expectedObjects} objects)"
+                        else "Asset preflight: ${preparation.assets.missingObjects} of ${preparation.assets.expectedObjects} objects missing; " +
+                            "run mc-recon resolve $manifestPath --assets before execution",
+                    )
+                    out.println("Natives: ${if (preparation.natives.reused) "reused" else "prepared"} at ${preparation.natives.directory}")
+                    out.flush()
+                    0
+                } else {
+                    preparer.requireClientAssets(preparation, manifestPath)
+                    processLauncher.launch(preparation.specification)
+                }
+            }
+            LaunchSide.SERVER -> {
+                val gameDirectory = parsed.gameDirectory
+                    ?: layout.defaultGameDirectory(manifest.id, platform, "server")
+                val specification = preparer.prepareServer(
+                    manifest,
+                    runtime,
+                    ServerLaunchOptions(gameDirectory, parsed.serverArguments),
+                )
+                if (!execute) {
+                    out.println(LaunchCommandRenderer.render(specification))
+                    out.flush()
+                    0
+                } else {
+                    processLauncher.launch(specification)
+                }
+            }
+        }
+    }
+
+    private fun parseLaunchOptions(arguments: Array<String>, side: LaunchSide): ParsedLaunchOptions {
+        var options = ParsedLaunchOptions()
+        var index = 3
+        while (index < arguments.size) {
+            val name = arguments[index]
+            if (name == "--") {
+                if (side != LaunchSide.SERVER) throw CliUsageException("only server launches accept arguments after --")
+                options = options.copy(serverArguments = arguments.drop(index + 1).ifEmpty { listOf("nogui") })
+                break
+            }
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$name requires a value")
+                return arguments[index + 1]
+            }
+            options = when (name) {
+                "--cache-dir" -> options.copy(cacheDirectory = Path.of(value())).also { index++ }
+                "--java" -> options.copy(javaExecutable = Path.of(value())).also { index++ }
+                "--game-dir", "--server-dir" -> options.copy(gameDirectory = Path.of(value())).also { index++ }
+                "--allow-java-version-mismatch" -> options.copy(allowJavaMismatch = true)
+                "--demo" -> clientOnly(side, name) { options.copy(demo = true) }
+                "--no-default-jvm-args" -> clientOnly(side, name) { options.copy(noDefaultJvmArguments = true) }
+                "--username" -> clientOnly(side, name) { options.copy(username = value()).also { index++ } }
+                "--uuid" -> clientOnly(side, name) { options.copy(uuid = value()).also { index++ } }
+                "--access-token" -> clientOnly(side, name) { options.copy(accessToken = value()).also { index++ } }
+                "--client-id" -> clientOnly(side, name) { options.copy(clientId = value()).also { index++ } }
+                "--xuid" -> clientOnly(side, name) { options.copy(xuid = value()).also { index++ } }
+                "--width" -> clientOnly(side, name) { options.copy(width = positiveInt(name, value())).also { index++ } }
+                "--height" -> clientOnly(side, name) { options.copy(height = positiveInt(name, value())).also { index++ } }
+                else -> throw CliUsageException("unknown ${side.name.lowercase()} launch option '$name'")
+            }
+            index++
+        }
+        return options
+    }
+
+    private fun clientOnly(side: LaunchSide, option: String, action: () -> ParsedLaunchOptions): ParsedLaunchOptions {
+        if (side != LaunchSide.CLIENT) throw CliUsageException("$option is only valid for client launches")
+        return action()
+    }
+
+    private fun positiveInt(option: String, value: String): Int =
+        value.toIntOrNull()?.takeIf { it > 0 } ?: throw CliUsageException("$option requires a positive integer")
 
     private fun runInspect(arguments: Array<String>, out: PrintWriter): Int {
         if (arguments.size != 2) throw CliUsageException("inspect requires exactly one manifest path")
@@ -190,6 +319,13 @@ class McReconCli(
         writer.println("Usage:")
         writer.println("  mc-recon inspect <version-manifest.json>")
         writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets]")
+        writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
+        writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
+        writer.println()
+        writer.println("Launch options: --cache-dir <path> --java <path> --game-dir <path> --allow-java-version-mismatch")
+        writer.println("Client: [--demo] [--username <name>] [--uuid <uuid>] [--access-token <token>] [--client-id <id>] [--xuid <xuid>]")
+        writer.println("        [--width <pixels> --height <pixels>] [--no-default-jvm-args]")
+        writer.println("Server: pass server arguments after -- (defaults to nogui)")
         writer.flush()
     }
 
@@ -201,3 +337,31 @@ class McReconCli(
 }
 
 private class CliUsageException(message: String) : RuntimeException(message)
+
+private data class ParsedLaunchOptions(
+    val cacheDirectory: Path = Path.of(".mc-recon"),
+    val javaExecutable: Path? = null,
+    val gameDirectory: Path? = null,
+    val allowJavaMismatch: Boolean = false,
+    val demo: Boolean = false,
+    val noDefaultJvmArguments: Boolean = false,
+    val username: String? = null,
+    val uuid: String? = null,
+    val accessToken: String? = null,
+    val clientId: String = "",
+    val xuid: String = "",
+    val width: Int? = null,
+    val height: Int? = null,
+    val serverArguments: List<String> = listOf("nogui"),
+) {
+    fun clientSession(): ClientSession {
+        val defaults = if (demo) ClientLaunchBuilder.DEMO_SESSION else ClientLaunchBuilder.SYNTHETIC_SESSION
+        return ClientSession(
+            username = username ?: defaults.username,
+            uuid = uuid ?: defaults.uuid,
+            accessToken = accessToken ?: defaults.accessToken,
+            clientId = clientId,
+            xuid = xuid,
+        )
+    }
+}

@@ -1,6 +1,7 @@
 package dev.mcrecon.resolver
 
 import java.nio.file.Path
+import dev.mcrecon.manifest.rules.HostPlatform
 
 class CacheLayout(cacheRoot: Path) {
     val root: Path = cacheRoot.toAbsolutePath().normalize()
@@ -32,6 +33,22 @@ class CacheLayout(cacheRoot: Path) {
 
     fun loggingFile(id: String): Path =
         safeResolve(root.resolve("logging"), listOf(safeSegment(id, "logging configuration ID")))
+
+    fun assetsRoot(): Path = root.resolve("assets")
+
+    fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(
+        root.resolve("runtime"),
+        listOf(
+            safeSegment(versionId, "version ID"),
+            safeSegment("${platform.operatingSystem.manifestName}-${platform.architecture.canonicalName}", "platform"),
+        ),
+    )
+
+    fun nativeDirectory(versionId: String, platform: HostPlatform): Path =
+        runtimeDirectory(versionId, platform).resolve("natives")
+
+    fun defaultGameDirectory(versionId: String, platform: HostPlatform, side: String): Path =
+        safeResolve(runtimeDirectory(versionId, platform).resolve("run"), listOf(safeSegment(side, "launch side")))
 
     private fun safeResolve(base: Path, segments: List<String>): Path {
         val normalizedBase = base.toAbsolutePath().normalize()

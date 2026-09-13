@@ -41,7 +41,7 @@ class VersionResolverTest {
             assertEquals(8, resolved.summary.downloadedArtifacts)
             assertEquals("-Dlog4j.configurationFile=\${path}", resolved.loggingConfigurations.getValue("client").metadata.argument)
 
-            val cached = resolver.resolve(manifest, platform)
+            val cached = resolver.resolveCached(manifest, platform)
 
             assertEquals(8, cached.summary.cachedArtifacts)
             assertEquals(0, cached.summary.downloadedArtifacts)

@@ -51,3 +51,7 @@ class IntegrityException(
 )
 
 class CachePathException(message: String) : ResolutionException(message)
+
+class MissingArtifactException(artifactName: String, path: Path) : ResolutionException(
+    "Resolved artifact '$artifactName' is missing from the cache at $path. Run 'mc-recon resolve <manifest>' first.",
+)

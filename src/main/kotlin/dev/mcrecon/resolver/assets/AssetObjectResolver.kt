@@ -13,23 +13,50 @@ class AssetObjectResolver(
 ) {
     private val baseUri = URI(assetBaseUri.toString().let { if (it.endsWith('/')) it else "$it/" })
 
-    fun resolveAll(index: AssetIndexDocument): Map<String, ResolvedArtifact> {
+    fun resolveAll(
+        index: AssetIndexDocument,
+        resolveArtifact: (ArtifactRequest) -> ResolvedArtifact = artifactStore::resolve,
+    ): Map<String, ResolvedArtifact> {
         val byHash = mutableMapOf<String, ResolvedArtifact>()
         val byLogicalName = linkedMapOf<String, ResolvedArtifact>()
         for ((logicalName, asset) in index.objects.toSortedMap()) {
             val resolved = byHash.getOrPut(asset.hash) {
-                artifactStore.resolve(
-                    ArtifactRequest(
-                        name = "asset $logicalName",
-                        uri = baseUri.resolve("${asset.hash.take(2)}/${asset.hash}"),
-                        expectedSha1 = asset.hash,
-                        expectedSize = asset.size,
-                        destination = cacheLayout.assetObject(asset.hash),
-                    ),
-                )
+                resolveArtifact(request(logicalName, asset.hash, asset.size))
             }
             byLogicalName[logicalName] = resolved
         }
         return byLogicalName
     }
+
+    fun availability(index: AssetIndexDocument): AssetAvailability {
+        val unique = index.objects.entries.distinctBy { it.value.hash }
+        var available = 0
+        val missing = mutableListOf<String>()
+        for ((logicalName, asset) in unique) {
+            try {
+                artifactStore.verifyCached(request(logicalName, asset.hash, asset.size))
+                available++
+            } catch (_: dev.mcrecon.resolver.MissingArtifactException) {
+                missing += logicalName
+            }
+        }
+        return AssetAvailability(unique.size, available, missing)
+    }
+
+    private fun request(logicalName: String, hash: String, size: Long) = ArtifactRequest(
+        name = "asset $logicalName",
+        uri = baseUri.resolve("${hash.take(2)}/$hash"),
+        expectedSha1 = hash,
+        expectedSize = size,
+        destination = cacheLayout.assetObject(hash),
+    )
+}
+
+data class AssetAvailability(
+    val expectedObjects: Int,
+    val availableObjects: Int,
+    val missingLogicalNames: List<String>,
+) {
+    val missingObjects: Int get() = expectedObjects - availableObjects
+    val complete: Boolean get() = missingObjects == 0
 }
