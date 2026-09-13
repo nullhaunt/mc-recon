@@ -34,6 +34,11 @@ class CacheLayout(cacheRoot: Path) {
     fun loggingFile(id: String): Path =
         safeResolve(root.resolve("logging"), listOf(safeSegment(id, "logging configuration ID")))
 
+    fun binaryIndex(versionId: String, side: String): Path = safeResolve(
+        root.resolve("indexes"),
+        listOf(safeSegment(versionId, "version ID"), "${safeSegment(side, "index side")}.json.gz"),
+    )
+
     fun assetsRoot(): Path = root.resolve("assets")
 
     fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(

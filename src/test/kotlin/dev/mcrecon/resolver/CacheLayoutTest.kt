@@ -17,6 +17,10 @@ class CacheLayoutTest {
             layout.root.resolve("libraries/org/example/demo/1.0/demo-1.0.jar"),
             layout.libraryArtifact("org/example/demo/1.0/demo-1.0.jar"),
         )
+        assertEquals(
+            layout.root.resolve("indexes/26.3-rc-2/client.json.gz"),
+            layout.binaryIndex("26.3-rc-2", "client"),
+        )
     }
 
     @Test

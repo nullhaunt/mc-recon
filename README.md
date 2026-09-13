@@ -13,7 +13,8 @@ Build and test with Java 25:
 ```
 
 The build selects a Java 25 toolchain. Kotlin currently emits Java 24-compatible
-classfiles, which run on Java 25; no Java 25-only APIs are needed in this slice.
+classfiles, which run on Java 25. Binary indexing uses the standard JDK
+`java.lang.classfile` API; no external bytecode framework is required.
 
 Inspect a local Mojang version manifest without downloading anything:
 
@@ -100,3 +101,34 @@ The server command executes the published JAR with `nogui` by default. It never
 creates or changes `eula.txt`; accepting Mojang's EULA remains an explicit user
 action in the selected server directory. Additional server arguments can be passed
 after `--`.
+
+## Binary archaeology
+
+Index an already-resolved client artifact directly from its manifest:
+
+```bash
+./gradlew run --args="index fixtures/26.3-rc-2.json --side client"
+```
+
+Compare two resolved versions, as concise text or structured JSON:
+
+```bash
+./gradlew run --args="diff-bin fixtures/26.3-rc-1.json fixtures/26.3-rc-2.json --side client"
+./gradlew run --args="diff-bin fixtures/26.3-rc-1.json fixtures/26.3-rc-2.json --side client --format json"
+```
+
+These commands are cache-only and never download artifacts. Resolve a missing artifact
+explicitly with `mc-recon resolve <manifest>`. Deterministic, schema-versioned indexes
+are stored as compressed JSON at `.mc-recon/indexes/<version>/<side>.json.gz` and are
+reused only while the source artifact identity still matches.
+
+Every archive entry and class has an exact SHA-256, while separate structural, member,
+method-code, and debug fingerprints answer what changed without confusing constant-pool
+layout or debug tables with executable changes. Indexing operates on JAR/classfile models
+and performs no decompilation, mapping, or source generation. See
+[`docs/classfile-index.md`](docs/classfile-index.md) for the precise fingerprint semantics.
+
+`--side server` currently indexes Mojang's published server distribution JAR as an
+ordinary JAR. Modern releases use an outer bundler, so this is deliberately labeled as
+the distribution/bundler and is not claimed to be the extracted dedicated-server
+implementation.

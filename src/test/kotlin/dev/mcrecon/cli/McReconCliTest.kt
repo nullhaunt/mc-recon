@@ -1,5 +1,6 @@
 package dev.mcrecon.cli
 
+import dev.mcrecon.classfile.ClassfileTestFixtures
 import dev.mcrecon.resolver.TestHttpServer
 import dev.mcrecon.resolver.sha1
 import org.junit.jupiter.api.io.TempDir
@@ -114,6 +115,74 @@ class McReconCliTest {
         assertEquals("", namedLaunch.second.second)
         assertContains(namedLaunch.second.first, "Dinnerbone")
         assertFalse(namedLaunch.second.first.contains("client launch requires"))
+    }
+
+    @Test
+    fun `index and binary diff commands are cache only and support structured json`() {
+        val cachePath = temporaryDirectory.resolve("binary-cache")
+        val classBytes = ClassfileTestFixtures.compile(
+            temporaryDirectory, "CliIndexSample", "public class CliIndexSample { int value() { return 1; } }",
+        )
+        val clientJar = ClassfileTestFixtures.writeJar(
+            cachePath.resolve("versions/binary-cli/client.jar"),
+            "CliIndexSample.class" to classBytes,
+            "data.json" to "{}".toByteArray(),
+        )
+        val serverBytes = "server".toByteArray()
+        val assetIndex = "{\"objects\":{}}".toByteArray()
+        val manifestPath = temporaryDirectory.resolve("binary-cli.json")
+        Files.writeString(
+            manifestPath,
+            """
+                {
+                  "id":"binary-cli",
+                  "type":"snapshot",
+                  "time":"2026-01-01T00:00:00Z",
+                  "releaseTime":"2026-01-01T00:00:00Z",
+                  "downloads":{
+                    "client":${download("https://example.invalid/client.jar", Files.readAllBytes(clientJar))},
+                    "server":${download("https://example.invalid/server.jar", serverBytes)}
+                  },
+                  "assetIndex":{
+                    "id":"binary-assets","sha1":"${sha1(assetIndex)}","size":${assetIndex.size},"totalSize":0,
+                    "url":"https://example.invalid/assets.json"
+                  },
+                  "javaVersion":{"component":"java-runtime-test","majorVersion":25},
+                  "libraries":[],
+                  "arguments":{"jvm":[],"game":[]},
+                  "mainClass":"example.Main"
+                }
+            """.trimIndent(),
+        )
+
+        fun invoke(vararg arguments: String): Triple<Int, String, String> {
+            val stdout = ByteArrayOutputStream()
+            val stderr = ByteArrayOutputStream()
+            val exit = McReconCli().run(arrayOf(*arguments), PrintWriter(stdout), PrintWriter(stderr))
+            return Triple(exit, stdout.toString(), stderr.toString())
+        }
+
+        val indexed = invoke("index", manifestPath.toString(), "--side", "client", "--cache-dir", cachePath.toString())
+        assertEquals(0, indexed.first)
+        assertEquals("", indexed.third)
+        assertContains(indexed.second, "classes:       1")
+        assertContains(indexed.second, "resources:     1")
+        assertTrue(Files.exists(cachePath.resolve("indexes/binary-cli/client.json.gz")))
+
+        val selfDiff = invoke(
+            "diff-bin", manifestPath.toString(), manifestPath.toString(), "--side", "client",
+            "--cache-dir", cachePath.toString(),
+        )
+        assertEquals(0, selfDiff.first)
+        assertContains(selfDiff.second, "changed:     0")
+
+        val jsonDiff = invoke(
+            "diff-bin", manifestPath.toString(), manifestPath.toString(), "--side", "client",
+            "--cache-dir", cachePath.toString(), "--format", "json",
+        )
+        assertEquals(0, jsonDiff.first)
+        assertContains(jsonDiff.second, "\"archiveEntries\"")
+        assertContains(jsonDiff.second, "\"resources\"")
     }
 
     private fun writeCachedLaunchFixture(cachePath: Path): Path {

@@ -1,5 +1,14 @@
 package dev.mcrecon.cli
 
+import dev.mcrecon.classfile.BinaryDiffEngine
+import dev.mcrecon.classfile.BinaryDiffException
+import dev.mcrecon.classfile.BinaryDiffRenderer
+import dev.mcrecon.classfile.BinaryIndexService
+import dev.mcrecon.classfile.BinarySide
+import dev.mcrecon.classfile.JarIndexStore
+import dev.mcrecon.classfile.JarIndexingException
+import dev.mcrecon.classfile.IndexModel.EntryKind
+import dev.mcrecon.classfile.StoredJarIndex
 import dev.mcrecon.manifest.Download
 import dev.mcrecon.manifest.ManifestException
 import dev.mcrecon.manifest.ManifestParser
@@ -45,6 +54,8 @@ class McReconCli(
             when (arguments.firstOrNull()) {
                 "inspect" -> runInspect(arguments, out)
                 "resolve" -> runResolve(arguments, out)
+                "index" -> runIndex(arguments, out)
+                "diff-bin" -> runBinaryDiff(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
                 "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
@@ -59,6 +70,10 @@ class McReconCli(
         } catch (exception: ManifestException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: ResolutionException) {
+            fail(err, 2, "error: ${exception.message}")
+        } catch (exception: JarIndexingException) {
+            fail(err, 2, "error: ${exception.message}")
+        } catch (exception: BinaryDiffException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: LaunchException) {
             fail(err, 2, "error: ${exception.message}")
@@ -220,6 +235,119 @@ class McReconCli(
         return 0
     }
 
+    private fun runIndex(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("index requires a manifest path")
+        val options = parseBinaryOptions(arguments, 2, allowFormat = false)
+        val manifest = parser.read(Path.of(arguments[1]))
+        val stored = BinaryIndexService(CacheLayout(options.cacheDirectory)).loadOrCreate(manifest, options.side)
+        printIndex(stored, out)
+        return 0
+    }
+
+    private fun runBinaryDiff(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 3) throw CliUsageException("diff-bin requires two manifest paths")
+        val options = parseBinaryOptions(arguments, 3, allowFormat = true)
+        val beforeManifest = parser.read(Path.of(arguments[1]))
+        val afterManifest = parser.read(Path.of(arguments[2]))
+        val service = BinaryIndexService(CacheLayout(options.cacheDirectory))
+        val before = service.loadOrCreate(beforeManifest, options.side).index
+        val after = service.loadOrCreate(afterManifest, options.side).index
+        val diff = BinaryDiffEngine().compare(before, after)
+        if (options.format == "json") {
+            JarIndexStore.deterministicObjectMapper().writerWithDefaultPrettyPrinter().writeValue(out, diff)
+            out.println()
+            out.flush()
+        } else {
+            BinaryDiffRenderer.render(diff, out)
+        }
+        return 0
+    }
+
+    private fun parseBinaryOptions(arguments: Array<String>, start: Int, allowFormat: Boolean): BinaryOptions {
+        var options = BinaryOptions()
+        var sideSpecified = false
+        var cacheSpecified = false
+        var formatSpecified = false
+        var index = start
+        while (index < arguments.size) {
+            val option = arguments[index]
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+                return arguments[index + 1]
+            }
+            when (option) {
+                "--side" -> {
+                    if (sideSpecified) throw CliUsageException("--side was specified more than once")
+                    val side = when (value()) {
+                        "client" -> BinarySide.CLIENT
+                        "server" -> BinarySide.SERVER
+                        else -> throw CliUsageException("--side must be 'client' or 'server'")
+                    }
+                    options = options.copy(side = side)
+                    sideSpecified = true
+                    index += 2
+                }
+                "--cache-dir" -> {
+                    if (cacheSpecified) throw CliUsageException("--cache-dir was specified more than once")
+                    options = options.copy(cacheDirectory = Path.of(value()))
+                    cacheSpecified = true
+                    index += 2
+                }
+                "--format" -> {
+                    if (!allowFormat) throw CliUsageException("--format is only valid for diff-bin")
+                    if (formatSpecified) throw CliUsageException("--format was specified more than once")
+                    val format = value()
+                    if (format != "text" && format != "json") {
+                        throw CliUsageException("--format must be 'text' or 'json'")
+                    }
+                    options = options.copy(format = format)
+                    formatSpecified = true
+                    index += 2
+                }
+                else -> throw CliUsageException("unknown ${arguments[0]} option '$option'")
+            }
+        }
+        if (!sideSpecified) throw CliUsageException("${arguments[0]} requires --side <client|server>")
+        return options
+    }
+
+    private fun printIndex(stored: StoredJarIndex, out: PrintWriter) {
+        val index = stored.index
+        val artifact = index.artifact()
+        val methods = index.classes().sumOf { it.methods().size }
+        val fields = index.classes().sumOf { it.fields().size }
+        val withCode = index.classes().sumOf { clazz -> clazz.methods().count { it.hasCode() } }
+        out.println("Indexed Minecraft ${artifact.minecraftVersion()} ${artifact.side()}")
+        if (artifact.artifactKind() == "server-distribution") {
+            out.println("Artifact is the published server distribution/bundler, not the extracted server implementation.")
+        }
+        out.println()
+        out.println("Artifact:")
+        out.println("  Size:          ${formatSize(artifact.size())}")
+        out.println("  SHA-1:         ${artifact.mojangSha1()}")
+        out.println("  SHA-256:       ${artifact.artifactHash()}")
+        out.println()
+        out.println("Entries:")
+        out.println("  total:         ${index.entries().size}")
+        out.println("  classes:       ${index.classes().size}")
+        out.println("  resources:     ${index.resources().size}")
+        out.println("  directories:   ${index.entries().count { it.kind() == EntryKind.DIRECTORY }}")
+        out.println()
+        out.println("Classes:")
+        out.println("  methods:       $methods")
+        out.println("  fields:        $fields")
+        out.println("  with code:     $withCode")
+        out.println()
+        out.println("Classfile versions:")
+        index.classes().groupingBy { it.majorVersion() }.eachCount().toSortedMap().forEach { (version, count) ->
+            out.println("  $version:            $count")
+        }
+        out.println()
+        out.println("Index:")
+        out.println("  ${stored.path} (${if (stored.reused) "reused" else "generated"})")
+        out.flush()
+    }
+
     private fun printInspection(manifest: VersionManifest, out: PrintWriter) {
         val platform = platformDetector.detect()
         val context = RuleContext(platform)
@@ -319,6 +447,8 @@ class McReconCli(
         writer.println("Usage:")
         writer.println("  mc-recon inspect <version-manifest.json>")
         writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets]")
+        writer.println("  mc-recon index <version-manifest.json> --side <client|server> [--cache-dir <path>]")
+        writer.println("  mc-recon diff-bin <before.json> <after.json> --side <client|server> [--cache-dir <path>] [--format <text|json>]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
         writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
         writer.println()
@@ -365,3 +495,9 @@ private data class ParsedLaunchOptions(
         )
     }
 }
+
+private data class BinaryOptions(
+    val cacheDirectory: Path = Path.of(".mc-recon"),
+    val side: BinarySide = BinarySide.CLIENT,
+    val format: String = "text",
+)

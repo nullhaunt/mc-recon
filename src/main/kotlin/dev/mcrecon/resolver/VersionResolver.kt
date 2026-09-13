@@ -28,6 +28,10 @@ class VersionResolver(
         manifest.serverDownload.toRequest("Minecraft ${manifest.id} server", cacheLayout.versionArtifact(manifest.id, "server.jar")),
     )
 
+    fun resolveClientCached(manifest: VersionManifest): ResolvedArtifact = artifactStore.verifyCached(
+        manifest.clientDownload.toRequest("Minecraft ${manifest.id} client", cacheLayout.versionArtifact(manifest.id, "client.jar")),
+    )
+
     private fun resolveWith(
         manifest: VersionManifest,
         platform: HostPlatform,
