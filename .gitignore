@@ -3,4 +3,5 @@
 build/
 out/
 .idea/
+.mc-recon/
 *.iml

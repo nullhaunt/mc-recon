@@ -35,6 +35,15 @@ class ManifestParserErrorTest {
         assertContains(exception.message.orEmpty(), "unsupported fields: unexpected")
     }
 
+    @Test
+    fun `identifies an artifact with a missing URL`() {
+        val json = minimalManifest(
+            """[{"name":"example:test:1","downloads":{"artifact":{"sha1":"0000000000000000000000000000000000000000","size":1,"path":"example/test/1/test-1.jar"}}}]""",
+        )
+        val exception = assertFailsWith<ManifestException> { parser.parse(json, "missing-url.json") }
+        assertContains(exception.message.orEmpty(), "libraries[0].downloads.artifact.url")
+    }
+
     private fun minimalManifest(libraries: String): String = """
         {
           "id": "test",

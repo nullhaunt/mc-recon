@@ -8,6 +8,13 @@ import dev.mcrecon.manifest.rules.HostPlatformDetector
 import dev.mcrecon.manifest.rules.RuleContext
 import dev.mcrecon.manifest.rules.RuleEvaluator
 import dev.mcrecon.manifest.rules.UnsupportedPlatformException
+import dev.mcrecon.resolver.ArtifactOrigin
+import dev.mcrecon.resolver.CacheLayout
+import dev.mcrecon.resolver.LibraryArtifactRole
+import dev.mcrecon.resolver.ResolutionException
+import dev.mcrecon.resolver.ResolvedArtifact
+import dev.mcrecon.resolver.ResolvedVersion
+import dev.mcrecon.resolver.VersionResolver
 import java.io.PrintWriter
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -21,26 +28,67 @@ class McReconCli(
             printUsage(out)
             return 0
         }
-        if (arguments.size != 2 || arguments[0] != "inspect") {
-            err.println(if (arguments.isEmpty()) "error: a command is required" else "error: expected 'inspect <manifest>'")
-            printUsage(err)
-            return 2
-        }
 
         return try {
-            val manifestPath = Path.of(arguments[1])
-            val manifest = parser.read(manifestPath)
-            printInspection(manifest, out)
-            0
+            when (arguments.firstOrNull()) {
+                "inspect" -> runInspect(arguments, out)
+                "resolve" -> runResolve(arguments, out)
+                null -> throw CliUsageException("a command is required")
+                else -> throw CliUsageException("unknown command '${arguments[0]}'")
+            }
+        } catch (exception: CliUsageException) {
+            err.println("error: ${exception.message}")
+            printUsage(err)
+            2
         } catch (exception: InvalidPathException) {
             fail(err, 2, "error: invalid manifest path: ${exception.input}")
         } catch (exception: ManifestException) {
+            fail(err, 2, "error: ${exception.message}")
+        } catch (exception: ResolutionException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: UnsupportedPlatformException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: Exception) {
             fail(err, 1, "internal error: ${exception.message ?: exception::class.simpleName}")
         }
+    }
+
+    private fun runInspect(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size != 2) throw CliUsageException("inspect requires exactly one manifest path")
+        val manifest = parser.read(Path.of(arguments[1]))
+        printInspection(manifest, out)
+        return 0
+    }
+
+    private fun runResolve(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("resolve requires a manifest path")
+        var cacheDirectory = Path.of(".mc-recon")
+        var includeAssets = false
+        var cacheSpecified = false
+        var index = 2
+        while (index < arguments.size) {
+            when (arguments[index]) {
+                "--assets" -> {
+                    if (includeAssets) throw CliUsageException("--assets was specified more than once")
+                    includeAssets = true
+                    index++
+                }
+                "--cache-dir" -> {
+                    if (cacheSpecified) throw CliUsageException("--cache-dir was specified more than once")
+                    if (index + 1 >= arguments.size) throw CliUsageException("--cache-dir requires a path")
+                    cacheDirectory = Path.of(arguments[index + 1])
+                    cacheSpecified = true
+                    index += 2
+                }
+                else -> throw CliUsageException("unknown resolve option '${arguments[index]}'")
+            }
+        }
+
+        val manifest = parser.read(Path.of(arguments[1]))
+        val platform = platformDetector.detect()
+        val resolved = VersionResolver(CacheLayout(cacheDirectory)).resolve(manifest, platform, includeAssets)
+        printResolution(resolved, includeAssets, out)
+        return 0
     }
 
     private fun printInspection(manifest: VersionManifest, out: PrintWriter) {
@@ -86,8 +134,62 @@ class McReconCli(
 
     private fun formatSize(size: Long): String = "%,d bytes".format(size)
 
+    private fun printResolution(resolved: ResolvedVersion, includedAssets: Boolean, out: PrintWriter) {
+        val standardLibraries = resolved.libraries.sumOf { library ->
+            library.artifacts.count { it.role == LibraryArtifactRole.STANDARD }
+        }
+        out.println(
+            "Resolved Minecraft ${resolved.manifest.id} for " +
+                "${resolved.platform.operatingSystem.manifestName}/${resolved.platform.architecture.canonicalName}",
+        )
+        out.println()
+        out.println("Client:                 ${originLabel(resolved.client)}")
+        out.println("Server:                 ${originLabel(resolved.server)}")
+        out.println("Libraries applicable:  ${resolved.libraries.size}")
+        out.println("  standard artifacts:  $standardLibraries")
+        out.println("  classifiers/natives: ${resolved.classifierAndNativeArtifacts.size}")
+        out.println("Asset index:            ${originLabel(resolved.assetIndex.file)} (${resolved.assetIndex.document.objects.size} objects)")
+        if (includedAssets) {
+            val uniqueAssets = resolved.assetObjects.values.distinctBy { it.path }
+            out.println("Asset objects:          ${describeArtifacts(uniqueAssets)}")
+        } else {
+            out.println("Asset objects:          not requested (use --assets)")
+        }
+        out.println(
+            "Logging configuration:  " +
+                if (resolved.loggingConfigurations.isEmpty()) "not present"
+                else describeArtifacts(resolved.loggingConfigurations.values.map { it.file }),
+        )
+        out.println()
+        out.println("Verified artifacts:     ${resolved.summary.verifiedArtifacts}")
+        out.println("Downloaded:             ${resolved.summary.downloadedArtifacts}")
+        out.println("Cached:                 ${resolved.summary.cachedArtifacts}")
+        if (resolved.summary.replacedCorruptArtifacts > 0) {
+            out.println("Corrupt entries replaced: ${resolved.summary.replacedCorruptArtifacts}")
+        }
+        out.println("Bytes downloaded:       ${formatSize(resolved.summary.bytesDownloaded)}")
+        out.println()
+        out.println("Cache:")
+        out.println("  ${resolved.cacheRoot}")
+        out.flush()
+    }
+
+    private fun originLabel(artifact: ResolvedArtifact): String = when {
+        artifact.replacedCorruptEntry -> "downloaded (replaced corrupt cache entry)"
+        artifact.origin == ArtifactOrigin.CACHE -> "cached"
+        else -> "downloaded"
+    }
+
+    private fun describeArtifacts(artifacts: Collection<ResolvedArtifact>): String {
+        val cached = artifacts.count { it.origin == ArtifactOrigin.CACHE }
+        val downloaded = artifacts.size - cached
+        return "${artifacts.size} verified ($cached cached, $downloaded downloaded)"
+    }
+
     private fun printUsage(writer: PrintWriter) {
-        writer.println("Usage: mc-recon inspect <version-manifest.json>")
+        writer.println("Usage:")
+        writer.println("  mc-recon inspect <version-manifest.json>")
+        writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets]")
         writer.flush()
     }
 
@@ -97,3 +199,5 @@ class McReconCli(
         return exitCode
     }
 }
+
+private class CliUsageException(message: String) : RuntimeException(message)

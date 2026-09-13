@@ -4,12 +4,12 @@ import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
+import dev.mcrecon.manifest.rules.Architecture
 import dev.mcrecon.manifest.rules.OperatingSystem
 import dev.mcrecon.manifest.rules.OsCondition
 import dev.mcrecon.manifest.rules.Rule
 import dev.mcrecon.manifest.rules.RuleAction
 import dev.mcrecon.manifest.rules.VersionRange
-import dev.mcrecon.manifest.rules.Architecture
 import java.io.IOException
 import java.net.URI
 import java.nio.file.Files
@@ -78,14 +78,26 @@ class ManifestParser(private val objectMapper: ObjectMapper = ObjectMapper()) {
 
     private fun parseDownload(node: JsonNode, path: String): Download {
         val value = node.requireObject(path)
-        val sha1 = value.requiredText("sha1")
+        val sha1Node = value.get("sha1")
+        require(sha1Node != null && sha1Node.isTextual && sha1Node.textValue().isNotBlank()) {
+            "$path.sha1 is required and must be a non-empty string"
+        }
+        val sha1 = sha1Node.textValue()
         require(SHA1.matches(sha1)) { "$path.sha1 must be a 40-character hexadecimal SHA-1" }
-        val size = value.requiredLong("size")
+        val sizeNode = value.get("size")
+        require(sizeNode != null && sizeNode.isIntegralNumber && sizeNode.canConvertToLong()) {
+            "$path.size is required and must be an integer"
+        }
+        val size = sizeNode.longValue()
         require(size >= 0) { "$path.size must not be negative" }
+        val urlNode = value.get("url")
+        require(urlNode != null && urlNode.isTextual && urlNode.textValue().isNotBlank()) {
+            "$path.url is required and must be a non-empty string"
+        }
         return Download(
             sha1 = sha1.lowercase(),
             size = size,
-            url = value.requiredUri("url"),
+            url = parseUri(urlNode.textValue(), "$path.url"),
             path = value.optionalText("path"),
             id = value.optionalText("id"),
         )
@@ -103,7 +115,7 @@ class ManifestParser(private val objectMapper: ObjectMapper = ObjectMapper()) {
             sha1 = sha1.lowercase(),
             size = size,
             totalSize = totalSize,
-            url = value.requiredUri("url"),
+            url = parseUri(value.requiredText("url"), "assetIndex.url"),
         )
     }
 
@@ -280,11 +292,6 @@ private fun ObjectNode.optionalInt(name: String): Int? {
     val value = get(name) ?: return null
     require(value.isIntegralNumber && value.canConvertToInt()) { "$name must be an integer" }
     return value.intValue()
-}
-
-private fun ObjectNode.requiredUri(name: String): URI {
-    val value = requiredText(name)
-    return parseUri(value, name)
 }
 
 private fun ObjectNode.optionalUri(name: String): URI? = optionalText(name)?.let { parseUri(it, name) }

@@ -21,11 +21,32 @@ Inspect a local Mojang version manifest without downloading anything:
 ./gradlew run --args="inspect fixtures/26.3-rc-2.json"
 ```
 
+Resolve the runtime artifacts into the default `.mc-recon` cache:
+
+```bash
+./gradlew run --args="resolve fixtures/26.3-rc-2.json"
+```
+
+Use a different cache root, or explicitly download every object referenced by the
+asset index:
+
+```bash
+./gradlew run --args="resolve fixtures/26.3-rc-2.json --cache-dir D:/minecraft-cache"
+./gradlew run --args="resolve fixtures/26.3-rc-2.json --assets"
+```
+
+`resolve` downloads the client, server, host-applicable libraries and classifiers,
+asset index, and logging configuration. Asset objects are only downloaded with
+`--assets` because the complete object set is several hundred megabytes. Every cache hit
+and download is checked against Mojang's declared SHA-1 and size. Downloads use
+partial files and are published to their final paths only after verification.
+
 An installed distribution provides the conceptual command directly:
 
 ```bash
 ./gradlew installDist
 ./build/install/mc-recon/bin/mc-recon inspect fixtures/26.3-rc-2.json
+./build/install/mc-recon/bin/mc-recon resolve fixtures/26.3-rc-2.json
 ```
 
 The manifest parser retains Mojang's ordered rules and conditional argument
