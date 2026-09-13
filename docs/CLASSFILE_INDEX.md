@@ -120,3 +120,18 @@ classified or discarded.
 Modern published server JARs are outer distributions/bundlers. They can be indexed as
 ordinary JARs, but the result is labeled accordingly and is not equivalent to an index of
 the bundled dedicated-server implementation.
+
+## On-demand instruction details
+
+`diff-bin ... --details` supplements a text diff by reparsing only changed class entries
+whose methods were added, removed, or have different `methodCodeHash` values. It renders a
+deterministic symbolic instruction diff with instruction-ordinal branch targets, resolved
+field and method owners/names/descriptors, logical constants, exception regions, and full
+bootstrap handles and arguments for `invokedynamic` and constant-dynamic sites.
+
+This detail view is reporting data, not another fingerprint. It is not persisted, does not
+change schema version 1, and does not modify any hash definition above.
+
+`inspect-method` uses the same renderer for an explicitly selected class, method name, and
+descriptor. This makes unchanged callees inspectable without constructing a whole-program
+call graph or treating them as part of the release delta.

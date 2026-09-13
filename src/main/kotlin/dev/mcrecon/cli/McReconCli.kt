@@ -2,13 +2,17 @@ package dev.mcrecon.cli
 
 import dev.mcrecon.classfile.BinaryDiffEngine
 import dev.mcrecon.classfile.BinaryDiffException
+import dev.mcrecon.classfile.BinaryDiffDetailsRenderer
+import dev.mcrecon.classfile.BinaryDiffDetailsService
 import dev.mcrecon.classfile.BinaryDiffRenderer
 import dev.mcrecon.classfile.BinaryIndexService
 import dev.mcrecon.classfile.BinarySide
 import dev.mcrecon.classfile.JarIndexStore
 import dev.mcrecon.classfile.JarIndexingException
 import dev.mcrecon.classfile.IndexModel.EntryKind
+import dev.mcrecon.classfile.ClassfileMethodInspector
 import dev.mcrecon.classfile.StoredJarIndex
+import dev.mcrecon.classfile.SymbolicMethodRenderer
 import dev.mcrecon.manifest.Download
 import dev.mcrecon.manifest.ManifestException
 import dev.mcrecon.manifest.ManifestParser
@@ -56,6 +60,7 @@ class McReconCli(
                 "resolve" -> runResolve(arguments, out)
                 "index" -> runIndex(arguments, out)
                 "diff-bin" -> runBinaryDiff(arguments, out)
+                "inspect-method" -> runInspectMethod(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
                 "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
@@ -249,7 +254,8 @@ class McReconCli(
         val options = parseBinaryOptions(arguments, 3, allowFormat = true)
         val beforeManifest = parser.read(Path.of(arguments[1]))
         val afterManifest = parser.read(Path.of(arguments[2]))
-        val service = BinaryIndexService(CacheLayout(options.cacheDirectory))
+        val layout = CacheLayout(options.cacheDirectory)
+        val service = BinaryIndexService(layout)
         val before = service.loadOrCreate(beforeManifest, options.side).index
         val after = service.loadOrCreate(afterManifest, options.side).index
         val diff = BinaryDiffEngine().compare(before, after)
@@ -259,8 +265,70 @@ class McReconCli(
             out.flush()
         } else {
             BinaryDiffRenderer.render(diff, out)
+            if (options.details) {
+                val details = BinaryDiffDetailsService().inspect(
+                    layout.versionArtifact(beforeManifest.id, "${options.side.cliName}.jar"),
+                    layout.versionArtifact(afterManifest.id, "${options.side.cliName}.jar"),
+                    diff,
+                )
+                BinaryDiffDetailsRenderer.render(details, beforeManifest.id, afterManifest.id, out)
+            }
         }
         return 0
+    }
+
+    private fun runInspectMethod(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("inspect-method requires a manifest path")
+        val options = parseMethodOptions(arguments)
+        val manifest = parser.read(Path.of(arguments[1]))
+        val layout = CacheLayout(options.cacheDirectory)
+        BinaryIndexService(layout).loadOrCreate(manifest, options.side)
+        val method = ClassfileMethodInspector().inspect(
+            layout.versionArtifact(manifest.id, "${options.side.cliName}.jar"),
+            options.className,
+            options.methodName,
+            options.descriptor,
+        )
+        SymbolicMethodRenderer.render(options.className, method, out)
+        return 0
+    }
+
+    private fun parseMethodOptions(arguments: Array<String>): MethodOptions {
+        var cacheDirectory = Path.of(".mc-recon")
+        var side: BinarySide? = null
+        var className: String? = null
+        var methodName: String? = null
+        var descriptor: String? = null
+        val seen = mutableSetOf<String>()
+        var index = 2
+        while (index < arguments.size) {
+            val option = arguments[index]
+            if (option !in setOf("--cache-dir", "--side", "--class", "--method", "--descriptor")) {
+                throw CliUsageException("unknown inspect-method option '$option'")
+            }
+            if (!seen.add(option)) throw CliUsageException("$option was specified more than once")
+            if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+            val value = arguments[index + 1]
+            when (option) {
+                "--cache-dir" -> cacheDirectory = Path.of(value)
+                "--side" -> side = when (value) {
+                    "client" -> BinarySide.CLIENT
+                    "server" -> BinarySide.SERVER
+                    else -> throw CliUsageException("--side must be 'client' or 'server'")
+                }
+                "--class" -> className = value
+                "--method" -> methodName = value
+                "--descriptor" -> descriptor = value
+            }
+            index += 2
+        }
+        return MethodOptions(
+            cacheDirectory,
+            side ?: throw CliUsageException("inspect-method requires --side <client|server>"),
+            className ?: throw CliUsageException("inspect-method requires --class <binary-name>"),
+            methodName ?: throw CliUsageException("inspect-method requires --method <name>"),
+            descriptor ?: throw CliUsageException("inspect-method requires --descriptor <JVM-descriptor>"),
+        )
     }
 
     private fun parseBinaryOptions(arguments: Array<String>, start: Int, allowFormat: Boolean): BinaryOptions {
@@ -268,6 +336,7 @@ class McReconCli(
         var sideSpecified = false
         var cacheSpecified = false
         var formatSpecified = false
+        var detailsSpecified = false
         var index = start
         while (index < arguments.size) {
             val option = arguments[index]
@@ -304,10 +373,20 @@ class McReconCli(
                     formatSpecified = true
                     index += 2
                 }
+                "--details" -> {
+                    if (!allowFormat) throw CliUsageException("--details is only valid for diff-bin")
+                    if (detailsSpecified) throw CliUsageException("--details was specified more than once")
+                    options = options.copy(details = true)
+                    detailsSpecified = true
+                    index++
+                }
                 else -> throw CliUsageException("unknown ${arguments[0]} option '$option'")
             }
         }
         if (!sideSpecified) throw CliUsageException("${arguments[0]} requires --side <client|server>")
+        if (options.details && options.format == "json") {
+            throw CliUsageException("--details is available only with text output")
+        }
         return options
     }
 
@@ -448,7 +527,8 @@ class McReconCli(
         writer.println("  mc-recon inspect <version-manifest.json>")
         writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets]")
         writer.println("  mc-recon index <version-manifest.json> --side <client|server> [--cache-dir <path>]")
-        writer.println("  mc-recon diff-bin <before.json> <after.json> --side <client|server> [--cache-dir <path>] [--format <text|json>]")
+        writer.println("  mc-recon diff-bin <before.json> <after.json> --side <client|server> [--cache-dir <path>] [--format <text|json>] [--details]")
+        writer.println("  mc-recon inspect-method <version.json> --side <client|server> --class <binary-name> --method <name> --descriptor <descriptor> [--cache-dir <path>]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
         writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
         writer.println()
@@ -500,4 +580,13 @@ private data class BinaryOptions(
     val cacheDirectory: Path = Path.of(".mc-recon"),
     val side: BinarySide = BinarySide.CLIENT,
     val format: String = "text",
+    val details: Boolean = false,
+)
+
+private data class MethodOptions(
+    val cacheDirectory: Path,
+    val side: BinarySide,
+    val className: String,
+    val methodName: String,
+    val descriptor: String,
 )

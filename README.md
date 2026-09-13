@@ -117,6 +117,23 @@ Compare two resolved versions, as concise text or structured JSON:
 ./gradlew run --args="diff-bin fixtures/26.3-rc-1.json fixtures/26.3-rc-2.json --side client --format json"
 ```
 
+Add `--details` to text output to inspect every added, removed, or implementation-changed
+method. The report renders JVM instructions with symbolic class/member references,
+canonical branch targets, logical constants, exception regions, and recursively expanded
+`invokedynamic`/constant-dynamic bootstrap handles and arguments:
+
+```bash
+./gradlew run --args="diff-bin fixtures/26.3-rc-1.json fixtures/26.3-rc-2.json --side client --details"
+```
+
+Detailed inspection is on demand and does not change or enlarge the persisted index.
+An unchanged call target that is relevant to an investigation can be inspected directly
+by full JVM identity:
+
+```bash
+./gradlew run --args="inspect-method fixtures/26.3-rc-2.json --side client --class net.minecraft.util.Util --method nonCriticalIoPool --descriptor ()Lnet/minecraft/TracingExecutor;"
+```
+
 These commands are cache-only and never download artifacts. Resolve a missing artifact
 explicitly with `mc-recon resolve <manifest>`. Deterministic, schema-versioned indexes
 are stored as compressed JSON at `.mc-recon/indexes/<version>/<side>.json.gz` and are

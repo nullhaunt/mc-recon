@@ -176,6 +176,24 @@ class McReconCliTest {
         assertEquals(0, selfDiff.first)
         assertContains(selfDiff.second, "changed:     0")
 
+        val detailedSelfDiff = invoke(
+            "diff-bin", manifestPath.toString(), manifestPath.toString(), "--side", "client",
+            "--cache-dir", cachePath.toString(), "--details",
+        )
+        assertEquals(0, detailedSelfDiff.first)
+        assertContains(detailedSelfDiff.second, "Method implementation details")
+        assertContains(detailedSelfDiff.second, "  none")
+
+        val inspectedMethod = invoke(
+            "inspect-method", manifestPath.toString(), "--side", "client",
+            "--class", "CliIndexSample", "--method", "value", "--descriptor", "()I",
+            "--cache-dir", cachePath.toString(),
+        )
+        assertEquals(0, inspectedMethod.first)
+        assertEquals("", inspectedMethod.third)
+        assertContains(inspectedMethod.second, "CliIndexSample.value()I")
+        assertContains(inspectedMethod.second, "constant INT 1")
+
         val jsonDiff = invoke(
             "diff-bin", manifestPath.toString(), manifestPath.toString(), "--side", "client",
             "--cache-dir", cachePath.toString(), "--format", "json",
