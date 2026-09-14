@@ -237,13 +237,14 @@ class tree:     9b13f230d65dace0e2832607e81bec551215d5b00e6dd0bdba0dfcad9ef51d90
 reference JAR:  01fae8f1d0ba9bbcd62af0014fd2f0ba3781c5ce026487be9f97c7f5beab09ff
 ```
 
-The next matching milestone should begin with compiler fingerprinting, especially
-`MethodParameters` and local-variable debug emission, while retaining the current
-baseline unchanged. That choice is driven by the 93.76% semantic method-code match rate
-and the 7,723 classes whose detected normalized gap is limited to parameter/debug
-evidence. Source matching should follow for the 2,830 code-different classes and the
-line-number/source-position problem. This is a recommendation only; no compiler or
-source repair is part of this baseline.
+The compiler-fingerprinting milestone is now complete. The best tested profile adds
+`-parameters` and full `-g`, uses `-source 25 -target 25`, promotes 1,063 classes to
+`EXACT`, and preserves all 89,110 semantic method-code matches. Temurin 25.0.4.1 and
+Microsoft 25.0.3, 25.0.4, and 25.0.4.1 produce an identical winning class tree. See
+[COMPILER_FINGERPRINTING.md](COMPILER_FINGERPRINTING.md) for the controlled matrix,
+full metrics, toolchain hashes, and attribution. The next matching milestone should
+therefore address source shape (especially lambda/synthetic method identities), with
+debug/source-position recovery treated separately.
 
 Two consecutive report generations must have identical report bytes. The verified
 report SHA-256 is recorded here after the final double run:

@@ -17,6 +17,15 @@ data class CompilerExecution(
 
 class JavaCompilationEngine {
     fun compile(sourceRoot: Path, outputRoot: Path, classpath: List<Path>, release: Int): CompilerExecution {
+        return compile(sourceRoot, outputRoot, classpath, logicalOptions(release))
+    }
+
+    fun compile(
+        sourceRoot: Path,
+        outputRoot: Path,
+        classpath: List<Path>,
+        logicalOptions: List<String>,
+    ): CompilerExecution {
         val root = sourceRoot.toAbsolutePath().normalize()
         val sources = Files.walk(root).use { paths ->
             paths.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".java") }
@@ -27,7 +36,7 @@ class JavaCompilationEngine {
         val compiler = ToolProvider.getSystemJavaCompiler()
             ?: throw CompilationException("The Java runtime executing mc-recon does not provide the JDK compiler API")
         val collector = DiagnosticCollector<JavaFileObject>()
-        val options = physicalOptions(release, classpath, outputRoot)
+        val options = physicalOptions(logicalOptions, classpath, outputRoot)
         val success = compiler.getStandardFileManager(collector, Locale.ROOT, StandardCharsets.UTF_8).use { manager ->
             compiler.getTask(
                 null,
@@ -64,14 +73,21 @@ class JavaCompilationEngine {
             "-d", "<class-output>",
         )
 
-        private fun physicalOptions(release: Int, classpath: List<Path>, outputRoot: Path): List<String> =
-            logicalOptions(release).map { option ->
+        private fun physicalOptions(logicalOptions: List<String>, classpath: List<Path>, outputRoot: Path): List<String> {
+            require(logicalOptions.count { it == "<resolved-manifest-artifacts>" } == 1) {
+                "Compiler options must contain exactly one classpath placeholder"
+            }
+            require(logicalOptions.count { it == "<class-output>" } == 1) {
+                "Compiler options must contain exactly one class-output placeholder"
+            }
+            return logicalOptions.map { option ->
                 when (option) {
                     "<resolved-manifest-artifacts>" -> classpath.joinToString(java.io.File.pathSeparator) { it.toString() }
                     "<class-output>" -> outputRoot.toString()
                     else -> option
                 }
             }
+        }
 
         private fun sourcePath(root: Path, source: JavaFileObject?): String {
             if (source == null) return ""

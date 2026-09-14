@@ -52,6 +52,12 @@ The default layout is:
     reconstruction.json
     classes/
     compile-report.json
+    compiler-profiles/
+        <profile-id>/
+            classes/
+            compile-report.json
+            verification.json
+        toolchain-probe.json
 ```
 
 Resources and JAR packaging are deliberately outside this milestone.
@@ -85,6 +91,14 @@ recompiled.
 
 Annotation processing is disabled explicitly. Warnings are retained, not globally
 suppressed.
+
+Compiler archaeology uses the separate `compile-profile` and `toolchain probe`
+commands. Those commands retain the same reconstructed source and resolver-verified
+classpath while varying a deterministic `CompilerProfile`; they never publish over
+the canonical compile output. Profile provenance adds portable JDK/JavacTool identity
+and compiler-file hashes, and reuse also requires that identity and the ordered logical
+options to match. See [COMPILER_FINGERPRINTING.md](COMPILER_FINGERPRINTING.md) for the
+interface, isolation guarantees, complete 26.3-rc-2 matrix, and measured result.
 
 ## Transformation model
 
@@ -196,7 +210,8 @@ one inexact non-varargs call. They are evidence for later matching work, not blo
 Compile-to-green establishes compilability, not source or classfile identity. The
 reconstructed source still contains decompiler-shaped control flow, raw/unchecked
 constructs, synthesized legal-source bridges, and removed compile-only annotations.
-The generated classfiles are deterministic under the selected JDK, but are not yet
-compared or required to match Mojang's classfiles. Compiler fingerprinting, exact
-Mojang JDK identification, resources/JAR reproduction, workspace generation, and the
-classfile-matching campaign remain separate milestones.
+The generated classfiles are deterministic under the selected JDK but are not required
+to match Mojang's classfiles. Compiler fingerprinting has now constrained the best
+tested Java 25 profile without identifying one historical Mojang JDK distribution;
+source-shape matching, resources/JAR reproduction, and workspace generation remain
+separate milestones.

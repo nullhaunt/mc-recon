@@ -68,6 +68,26 @@ class CacheLayout(cacheRoot: Path) {
     fun verificationReport(versionId: String, side: String): Path =
         reconstructionDirectory(versionId, side).resolve("verification.json")
 
+    fun compilerProfilesDirectory(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("compiler-profiles")
+
+    fun compilerProfileDirectory(versionId: String, side: String, profileId: String): Path = safeResolve(
+        compilerProfilesDirectory(versionId, side),
+        listOf(safeSegment(profileId, "compiler profile ID")),
+    )
+
+    fun compilerProfileClasses(versionId: String, side: String, profileId: String): Path =
+        compilerProfileDirectory(versionId, side, profileId).resolve("classes")
+
+    fun compilerProfileCompilationReport(versionId: String, side: String, profileId: String): Path =
+        compilerProfileDirectory(versionId, side, profileId).resolve("compile-report.json")
+
+    fun compilerProfileVerificationReport(versionId: String, side: String, profileId: String): Path =
+        compilerProfileDirectory(versionId, side, profileId).resolve("verification.json")
+
+    fun toolchainProbeReport(versionId: String, side: String): Path =
+        compilerProfilesDirectory(versionId, side).resolve("toolchain-probe.json")
+
     fun assetsRoot(): Path = root.resolve("assets")
 
     fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(

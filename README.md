@@ -226,3 +226,17 @@ adds on-demand symbolic instruction diffs. Compare two saved baselines with
 `verify-compare <before-verification.json> <after-verification.json>`. Classification
 rules, the complete 26.3-rc-2 baseline, and the measured mismatch analysis are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+
+Run isolated compiler-option or JDK experiments without replacing the canonical
+compiled tree:
+
+```bash
+./gradlew run --args="compile-profile fixtures/26.3-rc-2.json --side client --profile release25-g-parameters"
+./gradlew run --args="toolchain probe fixtures/26.3-rc-2.json --side client"
+```
+
+Profiles are content-keyed by source, compiler identity, options, and ordered
+classpath, and each candidate is compiled, indexed, verified, and compared with the
+canonical baseline. The complete option matrix, alternate-JDK evidence, winning
+profile, and attribution are in
+[`docs/COMPILER_FINGERPRINTING.md`](docs/COMPILER_FINGERPRINTING.md).

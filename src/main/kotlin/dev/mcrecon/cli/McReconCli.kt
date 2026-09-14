@@ -16,6 +16,10 @@ import dev.mcrecon.classfile.SymbolicMethodRenderer
 import dev.mcrecon.compiler.CompilationException
 import dev.mcrecon.compiler.CompilationResult
 import dev.mcrecon.compiler.CompilationService
+import dev.mcrecon.compiler.CompilerOptionProfiles
+import dev.mcrecon.compiler.CompilerProfileService
+import dev.mcrecon.compiler.ToolchainProbeRenderer
+import dev.mcrecon.compiler.ToolchainProbeService
 import dev.mcrecon.decompiler.DecompilationException
 import dev.mcrecon.decompiler.DecompilationResult
 import dev.mcrecon.decompiler.DecompilationService
@@ -82,6 +86,8 @@ class McReconCli(
                 "decompile" -> runDecompile(arguments, out)
                 "reconstruct" -> runReconstruct(arguments, out)
                 "compile" -> runCompile(arguments, out)
+                "compile-profile" -> runCompileProfile(arguments, out)
+                "toolchain" -> runToolchain(arguments, out)
                 "verify" -> runVerify(arguments, out)
                 "verify-compare" -> runVerificationComparison(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
@@ -249,6 +255,126 @@ class McReconCli(
         val result = CompilationService(layout).compile(manifest, options.side, options.force, options.javaExecutable, options.raw)
         printCompilation(result, options.diagnostics, out)
         return if (result.report.output().errors() == 0) 0 else 1
+    }
+
+    private fun runCompileProfile(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("compile-profile requires a manifest path")
+        val manifest = parser.read(Path.of(arguments[1]))
+        val options = parseCompilerExperimentOptions(arguments, 2, requireProfile = true)
+        val optionProfile = CompilerOptionProfiles.find(manifest.javaVersion.majorVersion, options.profileIds.single())
+        val result = CompilerProfileService(CacheLayout(options.cacheDirectory)).compileAndVerify(
+            manifest,
+            options.side,
+            optionProfile,
+            options.force,
+            options.javaHome,
+        )
+        val output = result.compilationReport.output()
+        out.println("Compiler profile ${result.profile.id()}: ${output.result().lowercase()}")
+        out.println("  option profile:     ${result.profile.optionProfileId()}")
+        out.println("  compiler identity: ${result.profile.toolchain().identitySha256()}")
+        out.println("  source-tree hash:  ${result.compilationReport.inputs().sourceTreeSha256()}")
+        out.println("  classfiles:        ${output.classFiles()}")
+        out.println("  class-tree hash:   ${output.classTreeSha256() ?: "<none>"}")
+        out.println("  errors:            ${output.errors()}")
+        out.println("  warnings:          ${output.warnings()}")
+        out.println("  reused:            ${if (result.reusedCompilation) "yes" else "no"}")
+        out.println("  compile report:    ${result.compilationReportPath}")
+        result.verificationReport?.let { report ->
+            val counts = report.aggregate().classes()
+            out.println("  verification:      EXACT ${counts.exact()}, STRUCTURAL ${counts.structural()}, FUNCTIONAL ${counts.functional()}, COMPILES ${counts.compiles()}")
+            out.println("  verify report:     ${result.verificationReportPath}")
+        }
+        out.flush()
+        return if (output.errors() == 0) 0 else 1
+    }
+
+    private fun runToolchain(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 3 || arguments[1] != "probe") {
+            throw CliUsageException("toolchain requires 'probe <manifest path>'")
+        }
+        val manifest = parser.read(Path.of(arguments[2]))
+        val options = parseCompilerExperimentOptions(arguments, 3, requireProfile = false)
+        val profiles = if (options.profileIds.isEmpty()) {
+            CompilerOptionProfiles.all(manifest.javaVersion.majorVersion)
+        } else {
+            options.profileIds.map { CompilerOptionProfiles.find(manifest.javaVersion.majorVersion, it) }
+        }
+        val result = ToolchainProbeService(CacheLayout(options.cacheDirectory)).probe(
+            manifest,
+            options.side,
+            profiles,
+            options.force,
+            options.javaHome,
+        ) { message ->
+            out.println(message)
+            out.flush()
+        }
+        ToolchainProbeRenderer.render(result, out)
+        return 0
+    }
+
+    private fun parseCompilerExperimentOptions(
+        arguments: Array<String>,
+        start: Int,
+        requireProfile: Boolean,
+    ): CompilerExperimentOptions {
+        var options = CompilerExperimentOptions()
+        var sideSpecified = false
+        var cacheSpecified = false
+        var javaHomeSpecified = false
+        var forceSpecified = false
+        var index = start
+        while (index < arguments.size) {
+            val option = arguments[index]
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+                return arguments[index + 1]
+            }
+            when (option) {
+                "--side" -> {
+                    if (sideSpecified) throw CliUsageException("--side was specified more than once")
+                    options = options.copy(side = when (value()) {
+                        "client" -> DecompilationSide.CLIENT
+                        "server" -> DecompilationSide.SERVER
+                        else -> throw CliUsageException("--side must be 'client' or 'server'")
+                    })
+                    sideSpecified = true
+                    index += 2
+                }
+                "--cache-dir" -> {
+                    if (cacheSpecified) throw CliUsageException("--cache-dir was specified more than once")
+                    options = options.copy(cacheDirectory = Path.of(value()))
+                    cacheSpecified = true
+                    index += 2
+                }
+                "--java-home" -> {
+                    if (javaHomeSpecified) throw CliUsageException("--java-home was specified more than once")
+                    options = options.copy(javaHome = Path.of(value()))
+                    javaHomeSpecified = true
+                    index += 2
+                }
+                "--profile" -> {
+                    options = options.copy(profileIds = options.profileIds + value())
+                    index += 2
+                }
+                "--force" -> {
+                    if (forceSpecified) throw CliUsageException("--force was specified more than once")
+                    options = options.copy(force = true)
+                    forceSpecified = true
+                    index++
+                }
+                else -> throw CliUsageException("unknown compiler experiment option '$option'")
+            }
+        }
+        if (!sideSpecified) throw CliUsageException("compiler experiments require --side <client|server>")
+        if (requireProfile && options.profileIds.size != 1) {
+            throw CliUsageException("compile-profile requires exactly one --profile <id>")
+        }
+        if (options.profileIds.distinct().size != options.profileIds.size) {
+            throw CliUsageException("a compiler profile was specified more than once")
+        }
+        return options
     }
 
     private fun parseSourceBuildOptions(arguments: Array<String>, allowRaw: Boolean, allowDiagnostics: Boolean): SourceBuildOptions {
@@ -896,6 +1022,8 @@ class McReconCli(
         writer.println("  mc-recon decompile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--verbose]")
         writer.println("  mc-recon reconstruct <version.json> --side <client|server> [--cache-dir <path>] [--force]")
         writer.println("  mc-recon compile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--raw] [--diagnostics]")
+        writer.println("  mc-recon compile-profile <version.json> --side <client|server> --profile <id> [--cache-dir <path>] [--java-home <path>] [--force]")
+        writer.println("  mc-recon toolchain probe <version.json> --side <client|server> [--profile <id> ...] [--cache-dir <path>] [--java-home <path>] [--force]")
         writer.println("  mc-recon verify <version.json> --side <client|server> [--cache-dir <path>] [--format <text|json>] [--class <binary-name> [--details]]")
         writer.println("  mc-recon verify-compare <before-verification.json> <after-verification.json> [--format <text|json>]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
@@ -983,4 +1111,12 @@ private data class SourceBuildOptions(
     val force: Boolean = false,
     val raw: Boolean = false,
     val diagnostics: Boolean = false,
+)
+
+private data class CompilerExperimentOptions(
+    val cacheDirectory: Path = Path.of(".mc-recon"),
+    val side: DecompilationSide = DecompilationSide.CLIENT,
+    val profileIds: List<String> = emptyList(),
+    val javaHome: Path? = null,
+    val force: Boolean = false,
 )
