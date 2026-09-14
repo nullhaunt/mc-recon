@@ -31,7 +31,11 @@ class ProcessJavaRuntimeProbe : JavaRuntimeProbe {
         }
         val major = VERSION.find(output)?.groupValues?.get(1)?.toIntOrNull()
             ?: throw RuntimePreparationException("Could not determine the Java major version from '$output'")
-        return JavaRuntime(executable, major, output.lineSequence().firstOrNull().orEmpty())
+        return JavaRuntime(
+            executable,
+            major,
+            output.lineSequence().map(String::trim).filter(String::isNotEmpty).joinToString(" | "),
+        )
     }
 
     private companion object {

@@ -149,3 +149,34 @@ and performs no decompilation, mapping, or source generation. See
 ordinary JAR. Modern releases use an outer bundler, so this is deliberately labeled as
 the distribution/bundler and is not claimed to be the extracted dedicated-server
 implementation.
+
+## Raw source decompilation
+
+Decompile an already-resolved client with the pinned Vineflower integration:
+
+```bash
+./gradlew run --args="decompile fixtures/26.3-rc-2.json --side client"
+```
+
+The command is cache-only and fails with a `resolve` instruction when the verified client
+or one of its exact applicable libraries is absent. It uses Vineflower `1.12.0`
+programmatically, supplies the manifest-ordered non-native library artifacts plus the
+selected Java 25 runtime, and does not use mappings or transitive Maven resolution.
+
+Raw output and deterministic provenance are written to:
+
+```text
+.mc-recon/reconstruction/<version>/client/raw-source/
+.mc-recon/reconstruction/<version>/client/decompile.json
+```
+
+An intact result is reused only when its target, dependency list, Java context,
+Vineflower version/options, and format/schema still match. Use `--force` to regenerate;
+use `--verbose` to print retained warnings. Publication replaces the whole raw tree, so
+stale files cannot survive and a failed decompile cannot publish a partial result.
+
+This directory is exactly Vineflower's UTF-8/LF raw Java output. It is intentionally not
+reformatted or repaired by mc-recon and is not yet guaranteed to compile. Server source
+decompilation waits on a separate server-bundle extraction milestone. See
+[`docs/DECOMPILATION.md`](docs/DECOMPILATION.md) for the precise configuration,
+fingerprint, and reuse semantics.

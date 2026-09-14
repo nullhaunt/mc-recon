@@ -19,6 +19,27 @@ class McReconCliTest {
     lateinit var temporaryDirectory: Path
 
     @Test
+    fun `decompile is cache only and rejects server bundlers clearly`() {
+        fun invoke(vararg arguments: String): Pair<Int, String> {
+            val stdout = ByteArrayOutputStream()
+            val stderr = ByteArrayOutputStream()
+            val exit = McReconCli().run(arrayOf(*arguments), PrintWriter(stdout), PrintWriter(stderr))
+            return exit to stderr.toString()
+        }
+
+        val missing = invoke(
+            "decompile", "fixtures/26.3-rc-2.json", "--side", "client",
+            "--cache-dir", temporaryDirectory.resolve("empty-cache").toString(),
+        )
+        val server = invoke("decompile", "fixtures/26.3-rc-2.json", "--side", "server")
+
+        assertEquals(2, missing.first)
+        assertContains(missing.second, "Run 'mc-recon resolve <manifest>' first")
+        assertEquals(2, server.first)
+        assertContains(server.second, "published server artifact is a bundler")
+    }
+
+    @Test
     fun `nonexistent manifests fail without a stack trace`() {
         val stdout = ByteArrayOutputStream()
         val stderr = ByteArrayOutputStream()

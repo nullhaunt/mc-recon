@@ -30,6 +30,18 @@ data class ResolvedLoggingConfiguration(
     val file: ResolvedArtifact,
 )
 
+data class ResolvedClientInputs(
+    val manifest: VersionManifest,
+    val platform: HostPlatform,
+    val cacheRoot: Path,
+    val client: ResolvedArtifact,
+    val libraries: List<ResolvedLibrary>,
+) {
+    /** Manifest-ordered Java classpath context. Legacy native selections are extraction inputs only. */
+    val classpathLibraries: List<ResolvedLibraryArtifact>
+        get() = libraries.flatMap(ResolvedLibrary::artifacts).filter { it.role != LibraryArtifactRole.NATIVE }
+}
+
 data class ResolvedVersion(
     val manifest: VersionManifest,
     val platform: HostPlatform,

@@ -14,6 +14,7 @@ repositories {
 
 dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.20.0")
+    implementation("org.vineflower:vineflower:1.12.0")
 
     testImplementation(kotlin("test"))
 }

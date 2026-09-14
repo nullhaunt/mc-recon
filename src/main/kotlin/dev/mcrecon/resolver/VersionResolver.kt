@@ -32,6 +32,16 @@ class VersionResolver(
         manifest.clientDownload.toRequest("Minecraft ${manifest.id} client", cacheLayout.versionArtifact(manifest.id, "client.jar")),
     )
 
+    /**
+     * Loads only the verified inputs required to analyze/decompile the client. This deliberately
+     * does not make an unrelated cached server, asset index, or logging file a prerequisite.
+     */
+    fun resolveClientInputsCached(manifest: VersionManifest, platform: HostPlatform): ResolvedClientInputs {
+        val client = resolveClientCached(manifest)
+        val libraries = resolveLibraries(manifest, platform, artifactStore::verifyCached)
+        return ResolvedClientInputs(manifest, platform, cacheLayout.root, client, libraries)
+    }
+
     private fun resolveWith(
         manifest: VersionManifest,
         platform: HostPlatform,
@@ -45,26 +55,7 @@ class VersionResolver(
             manifest.serverDownload.toRequest("Minecraft ${manifest.id} server", cacheLayout.versionArtifact(manifest.id, "server.jar")),
         )
 
-        val selectedLibraries = librarySelector.select(manifest.libraries, RuleContext(platform))
-        val libraries = selectedLibraries.map { selected ->
-            val artifacts = selected.artifacts.map { artifact ->
-                val manifestPath = artifact.download.path
-                    ?: throw ResolutionException(
-                        "Library '${selected.library.name}' ${artifact.classifier ?: "artifact"} has no cache path in the manifest",
-                    )
-                ResolvedLibraryArtifact(
-                    role = artifact.role,
-                    classifier = artifact.classifier,
-                    file = resolveArtifact(
-                        artifact.download.toRequest(
-                            "library ${selected.library.name}${artifact.classifier?.let { " ($it)" }.orEmpty()}",
-                            cacheLayout.libraryArtifact(manifestPath),
-                        ),
-                    ),
-                )
-            }
-            ResolvedLibrary(selected.library, artifacts)
-        }
+        val libraries = resolveLibraries(manifest, platform, resolveArtifact)
 
         val resolvedAssetIndexFile = resolveArtifact(
             manifest.assetIndex.toRequest(
@@ -106,6 +97,33 @@ class VersionResolver(
             assetObjects = assetObjects,
             loggingConfigurations = logging,
         )
+    }
+
+    private fun resolveLibraries(
+        manifest: VersionManifest,
+        platform: HostPlatform,
+        resolveArtifact: (ArtifactRequest) -> ResolvedArtifact,
+    ): List<ResolvedLibrary> {
+        val selectedLibraries = librarySelector.select(manifest.libraries, RuleContext(platform))
+        return selectedLibraries.map { selected ->
+            val artifacts = selected.artifacts.map { artifact ->
+                val manifestPath = artifact.download.path
+                    ?: throw ResolutionException(
+                        "Library '${selected.library.name}' ${artifact.classifier ?: "artifact"} has no cache path in the manifest",
+                    )
+                ResolvedLibraryArtifact(
+                    role = artifact.role,
+                    classifier = artifact.classifier,
+                    file = resolveArtifact(
+                        artifact.download.toRequest(
+                            "library ${selected.library.name}${artifact.classifier?.let { " ($it)" }.orEmpty()}",
+                            cacheLayout.libraryArtifact(manifestPath),
+                        ),
+                    ),
+                )
+            }
+            ResolvedLibrary(selected.library, artifacts)
+        }
     }
 }
 

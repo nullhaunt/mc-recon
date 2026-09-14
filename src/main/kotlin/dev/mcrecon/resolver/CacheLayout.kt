@@ -39,6 +39,17 @@ class CacheLayout(cacheRoot: Path) {
         listOf(safeSegment(versionId, "version ID"), "${safeSegment(side, "index side")}.json.gz"),
     )
 
+    fun reconstructionDirectory(versionId: String, side: String): Path = safeResolve(
+        root.resolve("reconstruction"),
+        listOf(safeSegment(versionId, "version ID"), safeSegment(side, "reconstruction side")),
+    )
+
+    fun rawSourceDirectory(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("raw-source")
+
+    fun decompilationProvenance(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("decompile.json")
+
     fun assetsRoot(): Path = root.resolve("assets")
 
     fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(
