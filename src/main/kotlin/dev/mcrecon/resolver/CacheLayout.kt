@@ -65,6 +65,9 @@ class CacheLayout(cacheRoot: Path) {
     fun rawCompilationReport(versionId: String, side: String): Path =
         reconstructionDirectory(versionId, side).resolve("raw-compile-report.json")
 
+    fun verificationReport(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("verification.json")
+
     fun assetsRoot(): Path = root.resolve("assets")
 
     fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(

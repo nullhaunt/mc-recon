@@ -6,7 +6,7 @@ import java.util.List;
 public final class IndexModel {
     private IndexModel() {}
 
-    public static final int SCHEMA_VERSION = 1;
+    public static final int SCHEMA_VERSION = 2;
 
     public enum EntryKind {
         CLASS,
@@ -115,7 +115,15 @@ public final class IndexModel {
             boolean hasCode,
             String memberMetadataHash,
             String methodCodeHash,
-            String debugHash
+            String debugHash,
+            String lineNumberHash,
+            String localVariableHash,
+            String localVariableTypeHash,
+            String codeTypeAnnotationHash,
+            String exactCodeArrayHash,
+            String stackMapHash,
+            Integer maxStack,
+            Integer maxLocals
     ) {
         public String identity() {
             return name + descriptor;

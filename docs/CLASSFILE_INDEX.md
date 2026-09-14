@@ -102,6 +102,13 @@ primary code hash because they are verifier/serialization data derived from exec
 code. Their attribute presence remains visible, and any byte change remains visible via
 `classExactHash`.
 
+Index schema 2 adds supplemental verification diagnostics without changing any
+fingerprint above. Each method with Code now records separate hashes for line-number,
+local-variable, local-variable-type, and code type-annotation data, the exact bytecode
+array hash, a normalized stack-map representation hash, `max_stack`, and `max_locals`.
+These fields locate representation differences; they do not participate in
+`methodCodeHash`, `debugHash`, member metadata, or `classStructureHash`.
+
 ## Diff classification and limits
 
 The diff engine compares structured indexes. Archive entries and resources are classified
@@ -129,8 +136,8 @@ deterministic symbolic instruction diff with instruction-ordinal branch targets,
 field and method owners/names/descriptors, logical constants, exception regions, and full
 bootstrap handles and arguments for `invokedynamic` and constant-dynamic sites.
 
-This detail view is reporting data, not another fingerprint. It is not persisted, does not
-change schema version 1, and does not modify any hash definition above.
+This detail view is reporting data, not another fingerprint. It is not persisted and
+does not modify any hash definition above.
 
 `inspect-method` uses the same renderer for an explicitly selected class, method name, and
 descriptor. This makes unchanged callees inspectable without constructing a whole-program

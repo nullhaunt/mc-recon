@@ -143,7 +143,7 @@ Every archive entry and class has an exact SHA-256, while separate structural, m
 method-code, and debug fingerprints answer what changed without confusing constant-pool
 layout or debug tables with executable changes. Indexing operates on JAR/classfile models
 and performs no decompilation, mapping, or source generation. See
-[`docs/classfile-index.md`](docs/classfile-index.md) for the precise fingerprint semantics.
+[`docs/CLASSFILE_INDEX.md`](docs/CLASSFILE_INDEX.md) for the precise fingerprint semantics.
 
 `--side server` currently indexes Mojang's published server distribution JAR as an
 ordinary JAR. Modern releases use an outer bundler, so this is deliberately labeled as
@@ -209,3 +209,20 @@ reports remain physically separate beneath
 UTF-8, classpath, output, and `-proc:none` settings and publishes a class tree only at
 zero errors. For rule IDs, patch safeguards, classpath semantics, diagnostic evidence,
 and cache identities, see [`docs/RECONSTRUCTION.md`](docs/RECONSTRUCTION.md).
+
+## Classfile reconstruction verification
+
+Compare the resolver-verified Mojang client with the currently published compiled
+reconstruction output:
+
+```bash
+./gradlew run --args="verify fixtures/26.3-rc-2.json --side client"
+./gradlew run --args="verify fixtures/26.3-rc-2.json --side client --class com.mojang.blaze3d.Blaze3D"
+```
+
+The command writes deterministic `verification.json` provenance beside the compilation
+report. `--format json` emits the machine-readable report, while `--class ... --details`
+adds on-demand symbolic instruction diffs. Compare two saved baselines with
+`verify-compare <before-verification.json> <after-verification.json>`. Classification
+rules, the complete 26.3-rc-2 baseline, and the measured mismatch analysis are in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).

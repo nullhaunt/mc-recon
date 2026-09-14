@@ -37,6 +37,9 @@ import java.lang.classfile.attribute.RuntimeVisibleTypeAnnotationsAttribute
 import java.lang.classfile.attribute.SignatureAttribute
 import java.lang.classfile.attribute.SourceDebugExtensionAttribute
 import java.lang.classfile.attribute.SourceFileAttribute
+import java.lang.classfile.attribute.CodeAttribute
+import java.lang.classfile.attribute.StackMapFrameInfo
+import java.lang.classfile.attribute.StackMapTableAttribute
 import java.lang.classfile.attribute.UnknownAttribute
 import java.lang.classfile.constantpool.ClassEntry
 import java.lang.classfile.instruction.ArrayLoadInstruction
@@ -259,6 +262,14 @@ class ClassfileIndexer {
             metadata.hash(),
             codeHashes?.code,
             codeHashes?.debug,
+            codeHashes?.lineNumbers,
+            codeHashes?.localVariables,
+            codeHashes?.localVariableTypes,
+            codeHashes?.codeTypeAnnotations,
+            codeHashes?.exactCodeArray,
+            codeHashes?.stackMap,
+            codeHashes?.maxStack,
+            codeHashes?.maxLocals,
         )
     }
 
@@ -314,34 +325,45 @@ class ClassfileIndexer {
         }
 
         val debugForm = CanonicalForm("method-debug-v1")
+        val lineNumberForm = CanonicalForm("method-line-numbers-v1")
+        val localVariableForm = CanonicalForm("method-local-variables-v1")
+        val localVariableTypeForm = CanonicalForm("method-local-variable-types-v1")
+        val codeTypeAnnotationForm = CanonicalForm("method-code-type-annotations-v1")
         var hasDebugMetadata = false
+        var hasLineNumbers = false
+        var hasLocalVariables = false
+        var hasLocalVariableTypes = false
+        var hasCodeTypeAnnotations = false
         var currentOrdinal = 0
         for (element in elements) {
             when (element) {
                 is Instruction -> currentOrdinal++
                 is LineNumber -> {
                     hasDebugMetadata = true
-                    debugForm.token("line", pack("line", currentOrdinal.toString(), element.line().toString()))
+                    hasLineNumbers = true
+                    val token = pack("line", currentOrdinal.toString(), element.line().toString())
+                    debugForm.token("line", token)
+                    lineNumberForm.token("line", token)
                 }
                 is LocalVariable -> {
                     hasDebugMetadata = true
-                    debugForm.token(
-                        "local",
-                        pack(
-                            "local", element.slot().toString(), element.name().stringValue(), element.type().stringValue(),
-                            label(element.startScope()), label(element.endScope()),
-                        ),
+                    hasLocalVariables = true
+                    val token = pack(
+                        "local", element.slot().toString(), element.name().stringValue(), element.type().stringValue(),
+                        label(element.startScope()), label(element.endScope()),
                     )
+                    debugForm.token("local", token)
+                    localVariableForm.token("local", token)
                 }
                 is LocalVariableType -> {
                     hasDebugMetadata = true
-                    debugForm.token(
-                        "localType",
-                        pack(
-                            "localType", element.slot().toString(), element.name().stringValue(), element.signature().stringValue(),
-                            label(element.startScope()), label(element.endScope()),
-                        ),
+                    hasLocalVariableTypes = true
+                    val token = pack(
+                        "localType", element.slot().toString(), element.name().stringValue(), element.signature().stringValue(),
+                        label(element.startScope()), label(element.endScope()),
                     )
+                    debugForm.token("localType", token)
+                    localVariableTypeForm.token("localType", token)
                 }
                 else -> Unit
             }
@@ -352,18 +374,64 @@ class ClassfileIndexer {
                     canonicalTypeAnnotation(it, ::label)
                 }.sorted().forEach {
                     hasDebugMetadata = true
+                    hasCodeTypeAnnotations = true
                     debugForm.token("visibleCodeTypeAnnotation", it)
+                    codeTypeAnnotationForm.token("visibleCodeTypeAnnotation", it)
                 }
                 is RuntimeInvisibleTypeAnnotationsAttribute -> attribute.annotations().map {
                     canonicalTypeAnnotation(it, ::label)
                 }.sorted().forEach {
                     hasDebugMetadata = true
+                    hasCodeTypeAnnotations = true
                     debugForm.token("invisibleCodeTypeAnnotation", it)
+                    codeTypeAnnotationForm.token("invisibleCodeTypeAnnotation", it)
                 }
                 else -> Unit
             }
         }
-        return CodeHashes(codeForm.hash(), if (hasDebugMetadata) debugForm.hash() else null)
+        val codeAttribute = code as? CodeAttribute
+            ?: throw ClassfileIndexingException("Code model is not a Code attribute")
+        val stackMap = code.find<StackMapTableAttribute>()?.let { attribute ->
+            val form = CanonicalForm("stack-map-v1")
+            attribute.entries().forEach { frame ->
+                form.token(
+                    "frame",
+                    pack(
+                        "frame",
+                        frame.frameType().toString(),
+                        label(frame.target()),
+                        pack("locals", *frame.locals().map { canonicalVerificationType(it, ::label) }.toTypedArray()),
+                        pack("stack", *frame.stack().map { canonicalVerificationType(it, ::label) }.toTypedArray()),
+                    ),
+                )
+            }
+            form.hash()
+        }
+        return CodeHashes(
+            codeForm.hash(),
+            if (hasDebugMetadata) debugForm.hash() else null,
+            if (hasLineNumbers) lineNumberForm.hash() else null,
+            if (hasLocalVariables) localVariableForm.hash() else null,
+            if (hasLocalVariableTypes) localVariableTypeForm.hash() else null,
+            if (hasCodeTypeAnnotations) codeTypeAnnotationForm.hash() else null,
+            Sha256.bytes(codeAttribute.codeArray()),
+            stackMap,
+            codeAttribute.maxStack(),
+            codeAttribute.maxLocals(),
+        )
+    }
+
+    private fun canonicalVerificationType(
+        value: StackMapFrameInfo.VerificationTypeInfo,
+        label: (Label) -> String,
+    ): String = when (value) {
+        is StackMapFrameInfo.ObjectVerificationTypeInfo -> pack(
+            "verificationType", value.tag().toString(), binaryName(value.className()),
+        )
+        is StackMapFrameInfo.UninitializedVerificationTypeInfo -> pack(
+            "verificationType", value.tag().toString(), label(value.newTarget()),
+        )
+        else -> pack("verificationType", value.tag().toString())
     }
 
     @Suppress("REDUNDANT_ELSE_IN_WHEN") // Retain the explicit failure when a future JDK adds an instruction model.
@@ -615,7 +683,18 @@ class ClassfileIndexer {
         if (duplicate != null) throw ClassfileIndexingException("duplicate $kind identity '${duplicate.key}'")
     }
 
-    private data class CodeHashes(val code: String, val debug: String?)
+    private data class CodeHashes(
+        val code: String,
+        val debug: String?,
+        val lineNumbers: String?,
+        val localVariables: String?,
+        val localVariableTypes: String?,
+        val codeTypeAnnotations: String?,
+        val exactCodeArray: String,
+        val stackMap: String?,
+        val maxStack: Int,
+        val maxLocals: Int,
+    )
 
     private companion object {
         val CLASS_DEBUG_ATTRIBUTES = setOf("SourceFile", "SourceDebugExtension", "SourceID", "CompilationID")

@@ -49,6 +49,14 @@ import dev.mcrecon.reconstruction.ReconstructionService
 import dev.mcrecon.runtime.RuntimePreparationException
 import dev.mcrecon.runtime.RuntimePreparer
 import dev.mcrecon.runtime.RuntimeSelectionOptions
+import dev.mcrecon.verification.VerificationDetailsService
+import dev.mcrecon.verification.ClassfileRepresentationDetailsRenderer
+import dev.mcrecon.verification.VerificationComparisonEngine
+import dev.mcrecon.verification.VerificationComparisonRenderer
+import dev.mcrecon.verification.VerificationException
+import dev.mcrecon.verification.VerificationReportStore
+import dev.mcrecon.verification.VerificationRenderer
+import dev.mcrecon.verification.VerificationService
 import java.io.PrintWriter
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
@@ -74,6 +82,8 @@ class McReconCli(
                 "decompile" -> runDecompile(arguments, out)
                 "reconstruct" -> runReconstruct(arguments, out)
                 "compile" -> runCompile(arguments, out)
+                "verify" -> runVerify(arguments, out)
+                "verify-compare" -> runVerificationComparison(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
                 "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
@@ -99,6 +109,8 @@ class McReconCli(
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: CompilationException) {
             fail(err, 2, "error: ${exception.message}")
+        } catch (exception: VerificationException) {
+            fail(err, 2, "error: ${exception.message}")
         } catch (exception: LaunchException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: RuntimePreparationException) {
@@ -108,6 +120,113 @@ class McReconCli(
         } catch (exception: Exception) {
             fail(err, 1, "internal error: ${exception.message ?: exception::class.simpleName}")
         }
+    }
+
+    private fun runVerify(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("verify requires a manifest path")
+        val options = parseVerificationOptions(arguments)
+        val manifest = parser.read(Path.of(arguments[1]))
+        val result = VerificationService(CacheLayout(options.cacheDirectory)).verify(manifest, options.side)
+        val selected = options.className?.let { className ->
+            result.report.classes().singleOrNull { it.binaryName() == className }
+                ?: throw VerificationException("Verification report has no class '$className'")
+        }
+        if (options.format == "json") {
+            val value = selected ?: result.report
+            JarIndexStore.deterministicObjectMapper().writerWithDefaultPrettyPrinter().writeValue(out, value)
+            out.println()
+            out.flush()
+        } else if (selected == null) {
+            VerificationRenderer.render(result.report, result.reportPath, out)
+        } else {
+            VerificationRenderer.renderClass(result.report, selected, result.reportPath, out)
+            if (options.details) {
+                val detailsService = VerificationDetailsService()
+                val details = detailsService.inspect(result.referenceJar, result.candidateClasses, selected)
+                out.println()
+                BinaryDiffDetailsRenderer.render(details, "reference", "rebuilt", out)
+                ClassfileRepresentationDetailsRenderer.render(
+                    detailsService.inspectRepresentation(result.referenceJar, result.candidateClasses, selected),
+                    selected.exact(),
+                    out,
+                )
+            }
+        }
+        return 0
+    }
+
+    private fun parseVerificationOptions(arguments: Array<String>): VerificationOptions {
+        var options = VerificationOptions()
+        var sideSpecified = false
+        val seen = mutableSetOf<String>()
+        var index = 2
+        while (index < arguments.size) {
+            val option = arguments[index]
+            if (!seen.add(option)) throw CliUsageException("$option was specified more than once")
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+                return arguments[index + 1]
+            }
+            when (option) {
+                "--side" -> {
+                    options = options.copy(side = when (value()) {
+                        "client" -> BinarySide.CLIENT
+                        "server" -> BinarySide.SERVER
+                        else -> throw CliUsageException("--side must be 'client' or 'server'")
+                    })
+                    sideSpecified = true
+                    index += 2
+                }
+                "--cache-dir" -> {
+                    options = options.copy(cacheDirectory = Path.of(value()))
+                    index += 2
+                }
+                "--format" -> {
+                    val format = value()
+                    if (format != "text" && format != "json") throw CliUsageException("--format must be 'text' or 'json'")
+                    options = options.copy(format = format)
+                    index += 2
+                }
+                "--class" -> {
+                    options = options.copy(className = value())
+                    index += 2
+                }
+                "--details" -> {
+                    options = options.copy(details = true)
+                    index++
+                }
+                else -> throw CliUsageException("unknown verify option '$option'")
+            }
+        }
+        if (!sideSpecified) throw CliUsageException("verify requires --side <client|server>")
+        if (options.details && options.className == null) throw CliUsageException("verify --details requires --class <binary-name>")
+        if (options.details && options.format == "json") throw CliUsageException("verify --details is available only with text output")
+        return options
+    }
+
+    private fun runVerificationComparison(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 3) throw CliUsageException("verify-compare requires two verification report paths")
+        var format = "text"
+        if (arguments.size > 3) {
+            if (arguments.size != 5 || arguments[3] != "--format") {
+                throw CliUsageException("verify-compare accepts only --format <text|json>")
+            }
+            format = arguments[4]
+            if (format != "text" && format != "json") throw CliUsageException("--format must be 'text' or 'json'")
+        }
+        val store = VerificationReportStore()
+        val comparison = VerificationComparisonEngine.compare(
+            store.read(Path.of(arguments[1])),
+            store.read(Path.of(arguments[2])),
+        )
+        if (format == "json") {
+            JarIndexStore.deterministicObjectMapper().writerWithDefaultPrettyPrinter().writeValue(out, comparison)
+            out.println()
+            out.flush()
+        } else {
+            VerificationComparisonRenderer.render(comparison, out)
+        }
+        return 0
     }
 
     private fun runReconstruct(arguments: Array<String>, out: PrintWriter): Int {
@@ -777,6 +896,8 @@ class McReconCli(
         writer.println("  mc-recon decompile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--verbose]")
         writer.println("  mc-recon reconstruct <version.json> --side <client|server> [--cache-dir <path>] [--force]")
         writer.println("  mc-recon compile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--raw] [--diagnostics]")
+        writer.println("  mc-recon verify <version.json> --side <client|server> [--cache-dir <path>] [--format <text|json>] [--class <binary-name> [--details]]")
+        writer.println("  mc-recon verify-compare <before-verification.json> <after-verification.json> [--format <text|json>]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
         writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
         writer.println()
@@ -837,6 +958,14 @@ private data class MethodOptions(
     val className: String,
     val methodName: String,
     val descriptor: String,
+)
+
+private data class VerificationOptions(
+    val cacheDirectory: Path = Path.of(".mc-recon"),
+    val side: BinarySide = BinarySide.CLIENT,
+    val format: String = "text",
+    val className: String? = null,
+    val details: Boolean = false,
 )
 
 private data class DecompileOptions(
