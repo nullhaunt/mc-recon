@@ -8,6 +8,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class VersionResolverTest {
@@ -47,6 +48,16 @@ class VersionResolverTest {
             assertEquals(0, cached.summary.downloadedArtifacts)
             assertEquals(1, server.hits("client.jar"))
             assertEquals(1, server.hits("logging.xml"))
+
+            val compileLibraries = resolver.resolveCompileLibraries(manifest)
+            assertEquals(
+                listOf("example:common:1", "example:native:1", "example:linux:1"),
+                compileLibraries.map { it.artifactName },
+            )
+            assertFalse(compileLibraries.any { it.artifactName == "example:classified:1:natives-windows" })
+            assertEquals(1, server.hits("linux.jar"))
+            assertEquals(0, server.hits("native-32.jar"))
+            assertEquals(1, server.hits("native-64.jar"))
         }
     }
 

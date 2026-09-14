@@ -42,6 +42,17 @@ class VersionResolver(
         return ResolvedClientInputs(manifest, platform, cacheLayout.root, client, libraries)
     }
 
+    /**
+     * Resolves the Java API artifacts needed to compile the complete client source tree. Unlike a
+     * host runtime, this includes standard Java artifacts guarded for another OS (currently the
+     * Objective-C bridge used by MacosUtil), while excluding classifier/native payloads.
+     */
+    fun resolveClientCompileInputsCached(manifest: VersionManifest): ResolvedClientCompileInputs =
+        ResolvedClientCompileInputs(manifest, resolveClientCached(manifest), resolveCompileLibraries(manifest, artifactStore::verifyCached))
+
+    fun resolveCompileLibraries(manifest: VersionManifest): List<ResolvedCompileLibrary> =
+        resolveCompileLibraries(manifest, artifactStore::resolve)
+
     private fun resolveWith(
         manifest: VersionManifest,
         platform: HostPlatform,
@@ -124,6 +135,28 @@ class VersionResolver(
             }
             ResolvedLibrary(selected.library, artifacts)
         }
+    }
+
+    private fun resolveCompileLibraries(
+        manifest: VersionManifest,
+        resolveArtifact: (ArtifactRequest) -> ResolvedArtifact,
+    ): List<ResolvedCompileLibrary> = manifest.libraries.mapNotNull { library ->
+        // A fourth Maven coordinate segment denotes a classifier. In Mojang manifests these are
+        // native payloads; their only class entry is commonly module-info.class and they are not
+        // Java API dependencies.
+        if (library.name.split(':').size != 3) return@mapNotNull null
+        val artifact = library.downloads?.artifact ?: return@mapNotNull null
+        val manifestPath = artifact.path
+            ?: throw ResolutionException("Compile library '${library.name}' has no cache path in the manifest")
+        ResolvedCompileLibrary(
+            library.name,
+            resolveArtifact(
+                artifact.toRequest(
+                    "compile library ${library.name}",
+                    cacheLayout.libraryArtifact(manifestPath),
+                ),
+            ),
+        )
     }
 }
 

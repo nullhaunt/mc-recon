@@ -13,6 +13,9 @@ import dev.mcrecon.classfile.IndexModel.EntryKind
 import dev.mcrecon.classfile.ClassfileMethodInspector
 import dev.mcrecon.classfile.StoredJarIndex
 import dev.mcrecon.classfile.SymbolicMethodRenderer
+import dev.mcrecon.compiler.CompilationException
+import dev.mcrecon.compiler.CompilationResult
+import dev.mcrecon.compiler.CompilationService
 import dev.mcrecon.decompiler.DecompilationException
 import dev.mcrecon.decompiler.DecompilationResult
 import dev.mcrecon.decompiler.DecompilationService
@@ -40,6 +43,9 @@ import dev.mcrecon.resolver.ResolutionException
 import dev.mcrecon.resolver.ResolvedArtifact
 import dev.mcrecon.resolver.ResolvedVersion
 import dev.mcrecon.resolver.VersionResolver
+import dev.mcrecon.reconstruction.ReconstructionException
+import dev.mcrecon.reconstruction.ReconstructionResult
+import dev.mcrecon.reconstruction.ReconstructionService
 import dev.mcrecon.runtime.RuntimePreparationException
 import dev.mcrecon.runtime.RuntimePreparer
 import dev.mcrecon.runtime.RuntimeSelectionOptions
@@ -66,6 +72,8 @@ class McReconCli(
                 "diff-bin" -> runBinaryDiff(arguments, out)
                 "inspect-method" -> runInspectMethod(arguments, out)
                 "decompile" -> runDecompile(arguments, out)
+                "reconstruct" -> runReconstruct(arguments, out)
+                "compile" -> runCompile(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
                 "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
@@ -87,6 +95,10 @@ class McReconCli(
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: DecompilationException) {
             fail(err, 2, "error: ${exception.message}")
+        } catch (exception: ReconstructionException) {
+            fail(err, 2, "error: ${exception.message}")
+        } catch (exception: CompilationException) {
+            fail(err, 2, "error: ${exception.message}")
         } catch (exception: LaunchException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: RuntimePreparationException) {
@@ -96,6 +108,124 @@ class McReconCli(
         } catch (exception: Exception) {
             fail(err, 1, "internal error: ${exception.message ?: exception::class.simpleName}")
         }
+    }
+
+    private fun runReconstruct(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("reconstruct requires a manifest path")
+        val options = parseSourceBuildOptions(arguments, allowRaw = false, allowDiagnostics = false)
+        val manifest = parser.read(Path.of(arguments[1]))
+        val result = ReconstructionService(CacheLayout(options.cacheDirectory)).reconstruct(manifest, options.side, options.force)
+        printReconstruction(result, out)
+        return 0
+    }
+
+    private fun runCompile(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("compile requires a manifest path")
+        val options = parseSourceBuildOptions(arguments, allowRaw = true, allowDiagnostics = true)
+        val manifest = parser.read(Path.of(arguments[1]))
+        val layout = CacheLayout(options.cacheDirectory)
+        if (!options.raw) {
+            ReconstructionService(layout).reconstruct(manifest, options.side, force = false)
+        }
+        val result = CompilationService(layout).compile(manifest, options.side, options.force, options.javaExecutable, options.raw)
+        printCompilation(result, options.diagnostics, out)
+        return if (result.report.output().errors() == 0) 0 else 1
+    }
+
+    private fun parseSourceBuildOptions(arguments: Array<String>, allowRaw: Boolean, allowDiagnostics: Boolean): SourceBuildOptions {
+        var options = SourceBuildOptions()
+        var sideSpecified = false
+        val seen = mutableSetOf<String>()
+        var index = 2
+        while (index < arguments.size) {
+            val option = arguments[index]
+            if (!seen.add(option)) throw CliUsageException("$option was specified more than once")
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+                return arguments[index + 1]
+            }
+            when (option) {
+                "--side" -> {
+                    options = options.copy(side = when (value()) {
+                        "client" -> DecompilationSide.CLIENT
+                        "server" -> DecompilationSide.SERVER
+                        else -> throw CliUsageException("--side must be 'client' or 'server'")
+                    })
+                    sideSpecified = true
+                    index += 2
+                }
+                "--cache-dir" -> {
+                    options = options.copy(cacheDirectory = Path.of(value()))
+                    index += 2
+                }
+                "--java" -> {
+                    if (!allowDiagnostics) throw CliUsageException("--java is only valid for compile")
+                    options = options.copy(javaExecutable = Path.of(value()))
+                    index += 2
+                }
+                "--force" -> {
+                    options = options.copy(force = true)
+                    index++
+                }
+                "--raw" -> {
+                    if (!allowRaw) throw CliUsageException("--raw is only valid for compile")
+                    options = options.copy(raw = true)
+                    index++
+                }
+                "--diagnostics" -> {
+                    if (!allowDiagnostics) throw CliUsageException("--diagnostics is only valid for compile")
+                    options = options.copy(diagnostics = true)
+                    index++
+                }
+                else -> throw CliUsageException("unknown ${arguments[0]} option '$option'")
+            }
+        }
+        if (!sideSpecified) throw CliUsageException("${arguments[0]} requires --side <client|server>")
+        return options
+    }
+
+    private fun printReconstruction(result: ReconstructionResult, out: PrintWriter) {
+        val provenance = result.provenance
+        out.println("Reconstructed Minecraft ${provenance.inputs().minecraftVersion()} ${provenance.inputs().side()}")
+        out.println("  Java files:        ${provenance.output().javaFiles()}")
+        out.println("  source-tree hash:  ${provenance.output().sourceTreeSha256()}")
+        out.println("  generic changes:   ${provenance.changes().count { it.kind() == "generic-rule" }}")
+        out.println("  explicit patches:  ${provenance.patches().size}")
+        out.println("  reused:            ${if (result.reused) "yes" else "no"}")
+        out.println("  path:              ${result.path}")
+        out.println("  provenance:        ${result.provenancePath}")
+        out.flush()
+    }
+
+    private fun printCompilation(result: CompilationResult, verbose: Boolean, out: PrintWriter) {
+        val report = result.report
+        val output = report.output()
+        out.println("Compiled Minecraft ${report.inputs().minecraftVersion()} ${report.inputs().side()}: ${output.result().lowercase()}")
+        out.println("  source files:      ${output.sourceFiles()}")
+        out.println("  errors:            ${output.errors()}")
+        out.println("  warnings:          ${output.warnings()}")
+        if (output.result() == "SUCCESS") {
+            out.println("  classfiles:        ${output.classFiles()}")
+            out.println("  class-tree hash:   ${output.classTreeSha256()}")
+            out.println("  reused:            ${if (result.reused) "yes" else "no"}")
+        } else {
+            val affected = report.diagnostics().filter { it.severity() == "ERROR" }.map { it.sourcePath() }.distinct().size
+            out.println("  affected files:    $affected")
+            out.println("  top groups:")
+            report.diagnosticGroups().filter { it.severity() == "ERROR" }.sortedByDescending { it.count() }.take(8).forEach {
+                out.println("    ${it.count()}  ${it.diagnosticCode()}")
+            }
+        }
+        out.println("  report:            ${result.reportPath}")
+        if (verbose && report.diagnostics().isNotEmpty()) {
+            out.println()
+            report.diagnostics().forEach { diagnostic ->
+                val location = if (diagnostic.sourcePath().isBlank()) "<no source>" else "${diagnostic.sourcePath()}:${diagnostic.line()}:${diagnostic.column()}"
+                out.println("${diagnostic.severity()} ${diagnostic.diagnosticCode()} $location")
+                out.println("  ${diagnostic.message().replace("\n", "\n  ")}")
+            }
+        }
+        out.flush()
     }
 
     private fun runDecompile(arguments: Array<String>, out: PrintWriter): Int {
@@ -316,6 +446,7 @@ class McReconCli(
         if (arguments.size < 2) throw CliUsageException("resolve requires a manifest path")
         var cacheDirectory = Path.of(".mc-recon")
         var includeAssets = false
+        var includeCompileLibraries = false
         var cacheSpecified = false
         var index = 2
         while (index < arguments.size) {
@@ -323,6 +454,11 @@ class McReconCli(
                 "--assets" -> {
                     if (includeAssets) throw CliUsageException("--assets was specified more than once")
                     includeAssets = true
+                    index++
+                }
+                "--compile-libraries" -> {
+                    if (includeCompileLibraries) throw CliUsageException("--compile-libraries was specified more than once")
+                    includeCompileLibraries = true
                     index++
                 }
                 "--cache-dir" -> {
@@ -338,8 +474,14 @@ class McReconCli(
 
         val manifest = parser.read(Path.of(arguments[1]))
         val platform = platformDetector.detect()
-        val resolved = VersionResolver(CacheLayout(cacheDirectory)).resolve(manifest, platform, includeAssets)
+        val resolver = VersionResolver(CacheLayout(cacheDirectory))
+        val resolved = resolver.resolve(manifest, platform, includeAssets)
         printResolution(resolved, includeAssets, out)
+        if (includeCompileLibraries) {
+            val compileLibraries = resolver.resolveCompileLibraries(manifest)
+            out.println("Compile libraries:      ${compileLibraries.size} verified")
+            out.flush()
+        }
         return 0
     }
 
@@ -628,11 +770,13 @@ class McReconCli(
     private fun printUsage(writer: PrintWriter) {
         writer.println("Usage:")
         writer.println("  mc-recon inspect <version-manifest.json>")
-        writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets]")
+        writer.println("  mc-recon resolve <version-manifest.json> [--cache-dir <path>] [--assets] [--compile-libraries]")
         writer.println("  mc-recon index <version-manifest.json> --side <client|server> [--cache-dir <path>]")
         writer.println("  mc-recon diff-bin <before.json> <after.json> --side <client|server> [--cache-dir <path>] [--format <text|json>] [--details]")
         writer.println("  mc-recon inspect-method <version.json> --side <client|server> --class <binary-name> --method <name> --descriptor <descriptor> [--cache-dir <path>]")
         writer.println("  mc-recon decompile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--verbose]")
+        writer.println("  mc-recon reconstruct <version.json> --side <client|server> [--cache-dir <path>] [--force]")
+        writer.println("  mc-recon compile <version.json> --side <client|server> [--cache-dir <path>] [--java <path>] [--force] [--raw] [--diagnostics]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
         writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
         writer.println()
@@ -701,4 +845,13 @@ private data class DecompileOptions(
     val javaExecutable: Path? = null,
     val force: Boolean = false,
     val verbose: Boolean = false,
+)
+
+private data class SourceBuildOptions(
+    val cacheDirectory: Path = Path.of(".mc-recon"),
+    val side: DecompilationSide = DecompilationSide.CLIENT,
+    val javaExecutable: Path? = null,
+    val force: Boolean = false,
+    val raw: Boolean = false,
+    val diagnostics: Boolean = false,
 )

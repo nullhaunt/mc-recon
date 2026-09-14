@@ -42,6 +42,17 @@ data class ResolvedClientInputs(
         get() = libraries.flatMap(ResolvedLibrary::artifacts).filter { it.role != LibraryArtifactRole.NATIVE }
 }
 
+data class ResolvedCompileLibrary(
+    val artifactName: String,
+    val file: ResolvedArtifact,
+)
+
+data class ResolvedClientCompileInputs(
+    val manifest: VersionManifest,
+    val client: ResolvedArtifact,
+    val libraries: List<ResolvedCompileLibrary>,
+)
+
 data class ResolvedVersion(
     val manifest: VersionManifest,
     val platform: HostPlatform,

@@ -180,3 +180,32 @@ reformatted or repaired by mc-recon and is not yet guaranteed to compile. Server
 decompilation waits on a separate server-bundle extraction milestone. See
 [`docs/DECOMPILATION.md`](docs/DECOMPILATION.md) for the precise configuration,
 fingerprint, and reuse semantics.
+
+## Reconstructed source compilation
+
+Build an attributable reconstructed tree, then compile only Minecraft source with the
+selected Java 25 JDK and the exact verified manifest dependency universe:
+
+```bash
+./gradlew run --args="resolve fixtures/26.3-rc-2.json --compile-libraries"
+./gradlew run --args="reconstruct fixtures/26.3-rc-2.json --side client"
+./gradlew run --args="compile fixtures/26.3-rc-2.json --side client"
+```
+
+`--compile-libraries` also verifies primary Java artifacts guarded for other operating
+systems when the complete client source references their APIs; it never adds native
+classifier payloads to the compiler classpath.
+
+Normal `compile` validates or rebuilds reconstruction first. To preserve an empirical
+baseline, compile immutable Vineflower output without publishing classes:
+
+```bash
+./gradlew run --args="compile fixtures/26.3-rc-2.json --side client --raw --diagnostics"
+```
+
+Reconstructed Java, deterministic provenance, compiled classes, and structured javac
+reports remain physically separate beneath
+`.mc-recon/reconstruction/<version>/<side>/`. Compilation uses explicit `--release`,
+UTF-8, classpath, output, and `-proc:none` settings and publishes a class tree only at
+zero errors. For rule IDs, patch safeguards, classpath semantics, diagnostic evidence,
+and cache identities, see [`docs/RECONSTRUCTION.md`](docs/RECONSTRUCTION.md).

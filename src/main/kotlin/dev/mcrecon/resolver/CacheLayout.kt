@@ -50,6 +50,21 @@ class CacheLayout(cacheRoot: Path) {
     fun decompilationProvenance(versionId: String, side: String): Path =
         reconstructionDirectory(versionId, side).resolve("decompile.json")
 
+    fun reconstructedSourceDirectory(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("reconstructed-source")
+
+    fun reconstructionProvenance(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("reconstruction.json")
+
+    fun compiledClassesDirectory(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("classes")
+
+    fun compilationReport(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("compile-report.json")
+
+    fun rawCompilationReport(versionId: String, side: String): Path =
+        reconstructionDirectory(versionId, side).resolve("raw-compile-report.json")
+
     fun assetsRoot(): Path = root.resolve("assets")
 
     fun runtimeDirectory(versionId: String, platform: HostPlatform): Path = safeResolve(

@@ -21,6 +21,18 @@ class CacheLayoutTest {
             layout.root.resolve("indexes/26.3-rc-2/client.json.gz"),
             layout.binaryIndex("26.3-rc-2", "client"),
         )
+        assertEquals(
+            layout.root.resolve("reconstruction/26.3-rc-2/client/reconstructed-source"),
+            layout.reconstructedSourceDirectory("26.3-rc-2", "client"),
+        )
+        assertEquals(
+            layout.root.resolve("reconstruction/26.3-rc-2/client/classes"),
+            layout.compiledClassesDirectory("26.3-rc-2", "client"),
+        )
+        assertEquals(
+            layout.root.resolve("reconstruction/26.3-rc-2/client/compile-report.json"),
+            layout.compilationReport("26.3-rc-2", "client"),
+        )
     }
 
     @Test
