@@ -39,3 +39,18 @@ application {
 tasks.test {
     useJUnitPlatform()
 }
+
+tasks.processResources {
+    from("gradlew") {
+        into("dev/mcrecon/workspace/wrapper")
+    }
+    from("gradlew.bat") {
+        into("dev/mcrecon/workspace/wrapper")
+    }
+    from("gradle/wrapper/gradle-wrapper.jar") {
+        into("dev/mcrecon/workspace/wrapper/gradle/wrapper")
+    }
+    from("gradle/wrapper/gradle-wrapper.properties") {
+        into("dev/mcrecon/workspace/wrapper/gradle/wrapper")
+    }
+}

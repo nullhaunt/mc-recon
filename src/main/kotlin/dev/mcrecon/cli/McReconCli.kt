@@ -61,8 +61,13 @@ import dev.mcrecon.verification.VerificationException
 import dev.mcrecon.verification.VerificationReportStore
 import dev.mcrecon.verification.VerificationRenderer
 import dev.mcrecon.verification.VerificationService
+import dev.mcrecon.workspace.WorkspaceException
+import dev.mcrecon.workspace.WorkspaceGenerator
+import dev.mcrecon.workspace.WorkspacePlanner
 import java.io.PrintWriter
+import java.nio.file.Files
 import java.nio.file.InvalidPathException
+import java.nio.file.LinkOption
 import java.nio.file.Path
 
 class McReconCli(
@@ -90,6 +95,7 @@ class McReconCli(
                 "toolchain" -> runToolchain(arguments, out)
                 "verify" -> runVerify(arguments, out)
                 "verify-compare" -> runVerificationComparison(arguments, out)
+                "workspace" -> runWorkspace(arguments, out)
                 "launch-command" -> runLaunch(arguments, out, execute = false)
                 "run" -> runLaunch(arguments, out, execute = true)
                 null -> throw CliUsageException("a command is required")
@@ -117,6 +123,8 @@ class McReconCli(
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: VerificationException) {
             fail(err, 2, "error: ${exception.message}")
+        } catch (exception: WorkspaceException) {
+            fail(err, 2, "error: ${exception.message}")
         } catch (exception: LaunchException) {
             fail(err, 2, "error: ${exception.message}")
         } catch (exception: RuntimePreparationException) {
@@ -126,6 +134,64 @@ class McReconCli(
         } catch (exception: Exception) {
             fail(err, 1, "internal error: ${exception.message ?: exception::class.simpleName}")
         }
+    }
+
+    private fun runWorkspace(arguments: Array<String>, out: PrintWriter): Int {
+        if (arguments.size < 2) throw CliUsageException("workspace requires a manifest path")
+        var cacheDirectory = Path.of(".mc-recon")
+        var output: Path? = null
+        var side: DecompilationSide? = null
+        val seen = mutableSetOf<String>()
+        var index = 2
+        while (index < arguments.size) {
+            val option = arguments[index]
+            if (!seen.add(option)) throw CliUsageException("$option was specified more than once")
+            fun value(): String {
+                if (index + 1 >= arguments.size) throw CliUsageException("$option requires a value")
+                return arguments[index + 1]
+            }
+            when (option) {
+                "--side" -> {
+                    side = when (value()) {
+                        "client" -> DecompilationSide.CLIENT
+                        "server" -> DecompilationSide.SERVER
+                        else -> throw CliUsageException("--side must be 'client' or 'server'")
+                    }
+                    index += 2
+                }
+                "--output" -> {
+                    output = Path.of(value())
+                    index += 2
+                }
+                "--cache-dir" -> {
+                    cacheDirectory = Path.of(value())
+                    index += 2
+                }
+                "--editable" -> index++
+                else -> throw CliUsageException("unknown workspace option '$option'")
+            }
+        }
+        val selectedSide = side ?: throw CliUsageException("workspace requires --side <client|server>")
+        val selectedOutput = output ?: throw CliUsageException("workspace requires --output <directory>")
+        if (Files.exists(selectedOutput.toAbsolutePath().normalize(), LinkOption.NOFOLLOW_LINKS)) {
+            throw WorkspaceException("Workspace output already exists; refusing to overwrite it: ${selectedOutput.toAbsolutePath().normalize()}")
+        }
+        val manifestPath = Path.of(arguments[1])
+        val manifest = parser.read(manifestPath)
+        val layout = CacheLayout(cacheDirectory)
+        val plan = WorkspacePlanner(layout).plan(manifest, manifestPath, selectedSide, platformDetector.detect())
+        val result = WorkspaceGenerator().generate(plan, selectedOutput)
+        out.println("Generated editable Minecraft ${manifest.id} ${selectedSide.cliName} workspace")
+        out.println("  output:             ${result.output}")
+        out.println("  Java source files:  ${result.javaFiles}")
+        out.println("  resource files:     ${result.resourceFiles}")
+        out.println("  dependencies:       ${result.dependencyArtifacts}")
+        out.println("  asset objects:      ${result.assetObjects}")
+        out.println("  Gradle:             ${WorkspaceGenerator.GRADLE_VERSION}")
+        out.println("  Java:               ${manifest.javaVersion.majorVersion}")
+        out.println("  workspace SHA-256:  ${result.workspaceSha256}")
+        out.flush()
+        return 0
     }
 
     private fun runVerify(arguments: Array<String>, out: PrintWriter): Int {
@@ -1026,6 +1092,7 @@ class McReconCli(
         writer.println("  mc-recon toolchain probe <version.json> --side <client|server> [--profile <id> ...] [--cache-dir <path>] [--java-home <path>] [--force]")
         writer.println("  mc-recon verify <version.json> --side <client|server> [--cache-dir <path>] [--format <text|json>] [--class <binary-name> [--details]]")
         writer.println("  mc-recon verify-compare <before-verification.json> <after-verification.json> [--format <text|json>]")
+        writer.println("  mc-recon workspace <version.json> --side <client|server> --output <directory> [--cache-dir <path>] [--editable]")
         writer.println("  mc-recon launch-command <version-manifest.json> <client|server> [launch options]")
         writer.println("  mc-recon run <version-manifest.json> <client|server> [launch options]")
         writer.println()

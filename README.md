@@ -1,7 +1,7 @@
 # mc-recon
 
-`mc-recon` is an early-stage standalone JVM tool for inspecting and, eventually,
-reconstructing published Minecraft: Java Edition artifacts. Mojang's published
+`mc-recon` is a standalone JVM tool for inspecting and reconstructing published
+Minecraft: Java Edition artifacts into editable development workspaces. Mojang's published
 metadata and binaries are treated as the ground truth.
 
 ## Getting started
@@ -240,3 +240,35 @@ classpath, and each candidate is compiled, indexed, verified, and compared with 
 canonical baseline. The complete option matrix, alternate-JDK evidence, winning
 profile, and attribution are in
 [`docs/COMPILER_FINGERPRINTING.md`](docs/COMPILER_FINGERPRINTING.md).
+
+## Editable Gradle workspace
+
+After resolving the complete runtime/compile inputs and reconstructing the client, generate an
+ordinary editable Gradle project at an explicit new path:
+
+```bash
+./gradlew run --args="resolve fixtures/26.3-rc-2.json --assets --compile-libraries"
+./gradlew run --args="reconstruct fixtures/26.3-rc-2.json --side client"
+./gradlew run --args="workspace fixtures/26.3-rc-2.json --side client --output workspaces/26.3-rc-2"
+```
+
+An installed distribution supports the shorter conceptual command shown in the final line.
+Generation refuses any existing output path so edits are never replaced. Open the generated
+directory in IntelliJ as a Gradle project, then use:
+
+```powershell
+.\gradlew.bat classes
+.\gradlew.bat build
+.\gradlew.bat runClient
+```
+
+The workspace uses a Java 25 toolchain and pinned Gradle 9.1.0 wrapper. It contains a
+byte-preserving editable copy of `reconstructed-source`, exact local dependency artifacts,
+original non-class client resources, external launcher assets, and prepared host natives. The
+original Mojang client JAR is not on `runClient`'s classpath. The default launch is isolated in
+`run/client` and uses the existing unauthenticated demo launch model; credentials are accepted
+only through ephemeral environment variables or Gradle properties.
+
+See [`docs/WORKSPACE.md`](docs/WORKSPACE.md) for the project layout, resource exclusions,
+lockfile, dependency/runtime strategy, authentication boundary, portability, and regeneration
+safety.

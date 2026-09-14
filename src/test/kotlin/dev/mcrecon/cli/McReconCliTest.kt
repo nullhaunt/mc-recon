@@ -19,6 +19,29 @@ class McReconCliTest {
     lateinit var temporaryDirectory: Path
 
     @Test
+    fun `workspace refuses an existing output before touching reconstruction inputs`() {
+        val output = temporaryDirectory.resolve("existing-workspace")
+        Files.createDirectories(output)
+        val userFile = output.resolve("user-edit.txt")
+        Files.writeString(userFile, "keep me\n")
+        val stdout = ByteArrayOutputStream()
+        val stderr = ByteArrayOutputStream()
+
+        val exitCode = McReconCli().run(
+            arrayOf(
+                "workspace", "fixtures/26.3-rc-2.json", "--side", "client", "--output", output.toString(),
+                "--cache-dir", temporaryDirectory.resolve("missing-cache").toString(),
+            ),
+            PrintWriter(stdout), PrintWriter(stderr),
+        )
+
+        assertEquals(2, exitCode)
+        assertContains(stderr.toString(), "refusing to overwrite")
+        assertEquals("keep me\n", Files.readString(userFile))
+        assertEquals("", stdout.toString())
+    }
+
+    @Test
     fun `decompile is cache only and rejects server bundlers clearly`() {
         fun invoke(vararg arguments: String): Pair<Int, String> {
             val stdout = ByteArrayOutputStream()
