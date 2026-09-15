@@ -1,7 +1,8 @@
 package dev.mcrecon.resolver
 
-import java.nio.file.Path
+import dev.mcrecon.manifest.AssetIndex
 import dev.mcrecon.manifest.rules.HostPlatform
+import java.nio.file.Path
 
 class CacheLayout(cacheRoot: Path) {
     val root: Path = cacheRoot.toAbsolutePath().normalize()
@@ -24,6 +25,20 @@ class CacheLayout(cacheRoot: Path) {
 
     fun assetIndex(indexId: String): Path =
         safeResolve(root.resolve("assets").resolve("indexes"), listOf("${safeSegment(indexId, "asset index ID")}.json"))
+
+    /**
+     * Exact asset indexes are isolated by their Mojang SHA-1. The logical ID remains the
+     * launcher-visible filename inside that identity-specific assets root.
+     */
+    fun assetIndex(index: AssetIndex): Path =
+        assetRuntimeRoot(index).resolve("indexes").resolve("${safeSegment(index.id, "asset index ID")}.json")
+
+    fun assetRuntimeRoot(index: AssetIndex): Path = safeResolve(
+        root.resolve("assets").resolve("by-index"),
+        listOf(safeSegment(index.sha1.lowercase(), "asset index SHA-1")),
+    )
+
+    fun assetObjectStoreRoot(): Path = root.resolve("assets").resolve("objects")
 
     fun assetObject(hash: String): Path {
         val normalized = hash.lowercase()

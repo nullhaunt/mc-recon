@@ -220,6 +220,8 @@ class WorkspaceGenerator(
             "settings.gradle.kts", "build.gradle.kts", "gradlew", "gradlew.bat",
             "gradle/wrapper/gradle-wrapper.jar", "gradle/wrapper/gradle-wrapper.properties",
             "reconstruction.lock.json", "README.md", ".gitignore", "gradle.properties",
+            ".idea/runConfigurations/Minecraft_Client.xml",
+            ".idea/runConfigurations/Minecraft_Client_Gradle.xml",
         ).forEach { relative ->
             if (!Files.isRegularFile(staging.resolve(relative), LinkOption.NOFOLLOW_LINKS)) {
                 throw WorkspaceException("Generated workspace is missing $relative")

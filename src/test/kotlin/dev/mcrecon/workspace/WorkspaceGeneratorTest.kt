@@ -37,8 +37,18 @@ class WorkspaceGeneratorTest {
         assertFalse(lockText.contains("access-token", ignoreCase = true))
         val lock = JarIndexStore.deterministicObjectMapper().readTree(lockText)
         assertEquals("test-version", lock.path("minecraft").path("version").asText())
+        assertEquals(plan.resolved.client.request.expectedSha1, lock.path("minecraft").path("client").path("mojangSha1").asText())
+        assertEquals(plan.manifest.assetIndex.id, lock.path("runtime").path("assetIndex").path("id").asText())
+        assertEquals(
+            plan.manifest.assetIndex.sha1,
+            lock.path("runtime").path("assetIndex").path("artifact").path("mojangSha1").asText(),
+        )
         assertEquals("1.12.0", lock.path("decompiler").path("vineflowerVersion").asText())
         assertEquals(25, lock.path("compilerProfile").path("javaMajorVersion").asInt())
+        val application = Files.readString(first.resolve(".idea/runConfigurations/Minecraft_Client.xml"))
+        assertFalse(application.contains("client.jar"))
+        assertFalse(application.contains("mc-recon-unauthenticated-token"))
+        assertFalse(application.contains(WorkspacePlaceholders.ACCESS_TOKEN))
     }
 
     @Test

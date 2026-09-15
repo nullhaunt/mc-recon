@@ -77,8 +77,8 @@ class ClientLaunchBuilder(
             )
         } ?: ExpandedArguments(emptyList(), emptySet())
         val game = argumentEvaluator.evaluate(version.manifest.arguments["game"].orEmpty(), context, placeholders)
-        val availability = AssetObjectResolver(cacheLayout, dev.mcrecon.resolver.VerifiedArtifactStore(cacheLayout.root))
-            .availability(version.assetIndex.document)
+        val assetResolver = AssetObjectResolver(cacheLayout, dev.mcrecon.resolver.VerifiedArtifactStore(cacheLayout.root))
+        val availability = assetResolver.prepareRuntimeView(version.assetIndex.document, version.assetIndex.runtimeRoot)
 
         return ClientLaunchPreparation(
             specification = LaunchSpecification(
@@ -120,8 +120,8 @@ class ClientLaunchBuilder(
         put("auth_player_name", PlaceholderValue(options.session.username))
         put("version_name", PlaceholderValue(version.manifest.id))
         put("game_directory", PlaceholderValue(options.gameDirectory.toAbsolutePath().normalize().toString()))
-        put("assets_root", PlaceholderValue(cacheLayout.assetsRoot().toString()))
-        put("assets_index_name", PlaceholderValue(version.manifest.assets ?: version.manifest.assetIndex.id))
+        put("assets_root", PlaceholderValue(version.assetIndex.runtimeRoot.toAbsolutePath().normalize().toString()))
+        put("assets_index_name", PlaceholderValue(version.manifest.assetIndex.id))
         put("auth_uuid", PlaceholderValue(normalizeUuid(options.session.uuid)))
         put("auth_access_token", PlaceholderValue(options.session.accessToken, sensitive = true))
         put("clientid", PlaceholderValue(options.session.clientId))

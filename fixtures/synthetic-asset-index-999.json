@@ -1,0 +1,41 @@
+{
+  "id": "synthetic-asset-index-999",
+  "type": "snapshot",
+  "time": "2026-01-01T00:00:00Z",
+  "releaseTime": "2026-01-01T00:00:00Z",
+  "downloads": {
+    "client": {
+      "sha1": "0000000000000000000000000000000000000000",
+      "size": 0,
+      "url": "https://example.invalid/client.jar"
+    },
+    "server": {
+      "sha1": "1111111111111111111111111111111111111111",
+      "size": 0,
+      "url": "https://example.invalid/server.jar"
+    }
+  },
+  "assetIndex": {
+    "id": "999",
+    "sha1": "2222222222222222222222222222222222222222",
+    "size": 0,
+    "totalSize": 0,
+    "url": "https://example.invalid/unrelated-index-name.json"
+  },
+  "assets": "legacy-wrong-value",
+  "javaVersion": {
+    "component": "java-runtime-test",
+    "majorVersion": 25
+  },
+  "libraries": [],
+  "arguments": {
+    "jvm": [],
+    "game": [
+      "--assetsDir",
+      "${assets_root}",
+      "--assetIndex",
+      "${assets_index_name}"
+    ]
+  },
+  "mainClass": "example.SyntheticMain"
+}

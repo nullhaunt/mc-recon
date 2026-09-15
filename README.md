@@ -42,6 +42,11 @@ asset index, and logging configuration. Asset objects are only downloaded with
 and download is checked against Mojang's declared SHA-1 and size. Downloads use
 partial files and are published to their final paths only after verification.
 
+Asset indexes are content-addressed in the cache by the manifest's `assetIndex.sha1`, while
+Minecraft's `--assetIndex` value comes independently and exactly from `assetIndex.id`. The
+resolved index path, its logical ID, its artifact identity, and the shared asset-object store
+are deliberately distinct, so a reused logical ID with changed index content is safe.
+
 An installed distribution provides the conceptual command directly:
 
 ```bash
@@ -254,7 +259,10 @@ ordinary editable Gradle project at an explicit new path:
 
 An installed distribution supports the shorter conceptual command shown in the final line.
 Generation refuses any existing output path so edits are never replaced. Open the generated
-directory in IntelliJ as a Gradle project, then use:
+directory in IntelliJ as a Gradle project. `Minecraft Client` (direct Application Run/Debug)
+and `Minecraft Client (Gradle)` (the `runClient` fallback) are shared automatically; no manual
+Run Configuration setup is required. The only generated `.idea` files are those two portable
+configurations. Command-line equivalents remain:
 
 ```powershell
 .\gradlew.bat classes
@@ -265,9 +273,14 @@ directory in IntelliJ as a Gradle project, then use:
 The workspace uses a Java 25 toolchain and pinned Gradle 9.1.0 wrapper. It contains a
 byte-preserving editable copy of `reconstructed-source`, exact local dependency artifacts,
 original non-class client resources, external launcher assets, and prepared host natives. The
-original Mojang client JAR is not on `runClient`'s classpath. The default launch is isolated in
-`run/client` and uses the existing unauthenticated demo launch model; credentials are accepted
-only through ephemeral environment variables or Gradle properties.
+original Mojang client JAR is not on either development classpath: Gradle uses the main source
+set and IntelliJ uses the imported `minecraft-<version>.main` module. Manifest `-cp` is removed
+from the shared workspace launch specification so it cannot shadow edited classes. Main class,
+JVM/game arguments, version metadata, logging, native paths, asset root, and asset-index ID all
+come from the same manifest-derived launch model used by `mc-recon run`. The default launch is
+isolated in `run/client` and uses the existing unauthenticated demo model; credentials are
+accepted only through ephemeral environment variables or Gradle properties, never written to
+the shared IntelliJ files.
 
 See [`docs/WORKSPACE.md`](docs/WORKSPACE.md) for the project layout, resource exclusions,
 lockfile, dependency/runtime strategy, authentication boundary, portability, and regeneration

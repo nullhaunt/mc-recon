@@ -28,8 +28,22 @@ mc-recon workspace fixtures/26.3-rc-2.json \
 ```
 
 `--editable` is accepted for clarity but is the default and currently the only mode. Open the
-output directory as a Gradle project in IntelliJ IDEA. mc-recon does not generate `.idea/` or
-`.iml` metadata.
+output directory as a Gradle project in IntelliJ IDEA. The project immediately exposes two
+shared run configurations:
+
+- `Minecraft Client` is an IntelliJ Application configuration. Run or Debug starts the
+  manifest main class directly with the imported Gradle main module, so breakpoints attach to
+  the JVM executing edited workspace classes.
+- `Minecraft Client (Gradle)` invokes `runClient` through the generated wrapper as a parity
+  and troubleshooting fallback.
+
+The only generated IntelliJ metadata is `.idea/runConfigurations/Minecraft_Client.xml` and
+`.idea/runConfigurations/Minecraft_Client_Gradle.xml`. IntelliJ's
+[project-file run configuration](https://www.jetbrains.com/help/idea/run-debug-configuration-java-application.html)
+mechanism uses `.idea/runConfigurations` as its default shared location. The generated `.gitignore`
+allows those two deterministic files while continuing to ignore `workspace.xml`, window and
+editor state, histories, statistics, and other machine-local `.idea` data. No `.iml` file is
+generated.
 
 The generated project contains:
 
@@ -46,6 +60,7 @@ src/main/resources/        unmodified client JAR resources
 .mc-recon/assets/          launcher asset index and object store
 .mc-recon/logging/         manifest logging configuration
 .mc-recon/natives/         already-prepared native runtime
+.idea/runConfigurations/  two portable shared IntelliJ launch configurations
 run/client/                isolated mutable game directory
 ```
 
@@ -91,18 +106,37 @@ META-INF/SIG-*
 ```
 
 The Mojang asset object store is not copied into `src/main/resources`. It remains an external
-launcher asset tree under `.mc-recon/assets`, addressed through the manifest asset index.
+launcher asset tree under `.mc-recon/assets`, addressed through the manifest asset index. In
+the central cache, an index is stored by its artifact identity at
+`assets/by-index/<asset-index-sha1>/indexes/<logical-id>.json`; the shared downloaded object
+store remains `assets/objects`. A content-specific runtime view links or copies those objects
+beneath the matching `by-index/<sha1>` root. Thus the logical ID passed to `--assetIndex`, the
+index SHA-1, the resolved index path, and the object-store root remain separate concepts. Two
+manifests may safely reuse one logical ID while publishing different index content.
 
 ## Runtime and authentication
 
 Workspace planning asks the existing manifest-driven client launch builder for the main class,
 JVM arguments, game arguments, feature defaults, native properties, asset paths, and logging
-configuration. The generated build only substitutes portable workspace paths, session values,
-and Gradle's compiled runtime classpath. Native extraction logic is not duplicated in Gradle.
+configuration. In particular, `${version_name}`, `${version_type}`, `${assets_index_name}`,
+`${launcher_name}`, and `${launcher_version}` are expanded by that model from the typed
+manifest and launcher defaults; `${assets_index_name}` is exactly `assetIndex.id`. The
+generated Gradle and IntelliJ files only substitute portable workspace paths, session values,
+and the compiled workspace classpath. Native extraction logic is not duplicated.
 
-`runClient` uses `run/client` and defaults to demo mode with mc-recon's synthetic,
-unauthenticated session. Authentication is not implemented. Optional session values can be
-provided at invocation time with environment variables:
+The official manifest JVM vector normally contains `-cp ${classpath}` for Mojang's client JAR.
+Workspace planning removes that option once, before either IDE or Gradle output is generated.
+Gradle uses `sourceSets.main.runtimeClasspath`; the IntelliJ Application configuration uses
+the imported `minecraft-<version>.main` module. Both therefore place compiled workspace
+classes and resources ahead of the exact external runtime dependencies, and neither puts the
+original Mojang client JAR on the application classpath. Applicable native and logging JVM
+properties remain in the shared launch specification and are rendered with `$PROJECT_DIR$`
+paths in IntelliJ metadata.
+
+Both configurations use `run/client` and default to demo mode with mc-recon's synthetic,
+unauthenticated session. The shared Application XML contains only inert values and never reads
+or stores an account token. Authentication is not implemented. `runClient` can accept optional
+session values at invocation time with environment variables:
 
 ```text
 MC_RECON_USERNAME

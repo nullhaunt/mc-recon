@@ -8,6 +8,8 @@ import dev.mcrecon.manifest.rules.RuleContext
 import dev.mcrecon.resolver.assets.AssetIndexParser
 import dev.mcrecon.resolver.assets.AssetObjectResolver
 import java.net.URI
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 class VersionResolver(
     private val cacheLayout: CacheLayout,
@@ -68,14 +70,20 @@ class VersionResolver(
 
         val libraries = resolveLibraries(manifest, platform, resolveArtifact)
 
-        val resolvedAssetIndexFile = resolveArtifact(
-            manifest.assetIndex.toRequest(
-                "asset index ${manifest.assetIndex.id}",
-                cacheLayout.assetIndex(manifest.assetIndex.id),
-            ),
+        val assetIndexRequest = manifest.assetIndex.toRequest(
+            "asset index ${manifest.assetIndex.id}",
+            cacheLayout.assetIndex(manifest.assetIndex),
         )
+        migrateLegacyAssetIndexIfValid(manifest, assetIndexRequest)
+        val resolvedAssetIndexFile = resolveArtifact(assetIndexRequest)
         val assetIndexDocument = assetIndexParser.read(resolvedAssetIndexFile.path)
-        val resolvedAssetIndex = ResolvedAssetIndex(manifest.assetIndex, resolvedAssetIndexFile, assetIndexDocument)
+        val resolvedAssetIndex = ResolvedAssetIndex(
+            manifest.assetIndex,
+            resolvedAssetIndexFile,
+            assetIndexDocument,
+            cacheLayout.assetRuntimeRoot(manifest.assetIndex),
+            cacheLayout.assetObjectStoreRoot(),
+        )
 
         val logging = manifest.logging.toSortedMap().mapValues { (name, configuration) ->
             val id = configuration.file.id ?: "$name-${configuration.file.sha1}.config"
@@ -108,6 +116,15 @@ class VersionResolver(
             assetObjects = assetObjects,
             loggingConfigurations = logging,
         )
+    }
+
+    private fun migrateLegacyAssetIndexIfValid(manifest: VersionManifest, request: ArtifactRequest) {
+        if (Files.exists(request.destination)) return
+        val legacy = cacheLayout.assetIndex(manifest.assetIndex.id)
+        if (!Files.isRegularFile(legacy)) return
+        if (!ArtifactVerifier.inspect(legacy).matches(request)) return
+        Files.createDirectories(request.destination.parent)
+        Files.copy(legacy, request.destination, StandardCopyOption.COPY_ATTRIBUTES)
     }
 
     private fun resolveLibraries(

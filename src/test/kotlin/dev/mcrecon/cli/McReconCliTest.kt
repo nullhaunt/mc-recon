@@ -127,7 +127,7 @@ class McReconCliTest {
             assertContains(stdout.toString(), "Resolved Minecraft cli-test")
             assertContains(stdout.toString(), "Verified artifacts:     3")
             assertTrue(Files.exists(cachePath.resolve("versions/cli-test/client.jar")))
-            assertTrue(Files.exists(cachePath.resolve("assets/indexes/cli-assets.json")))
+            assertTrue(Files.exists(cachePath.resolve("assets/by-index/${sha1(assetIndex)}/indexes/cli-assets.json")))
         }
     }
 

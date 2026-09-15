@@ -22,6 +22,10 @@ data class ResolvedAssetIndex(
     val metadata: dev.mcrecon.manifest.AssetIndex,
     val file: ResolvedArtifact,
     val document: AssetIndexDocument,
+    /** Root passed to Minecraft through the manifest's `${assets_root}` placeholder. */
+    val runtimeRoot: Path,
+    /** Shared content-addressed object store from which the runtime view is materialized. */
+    val objectStoreRoot: Path,
 )
 
 data class ResolvedLoggingConfiguration(

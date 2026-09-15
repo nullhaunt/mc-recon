@@ -2,6 +2,7 @@ package dev.mcrecon.launcher
 
 import dev.mcrecon.artifact
 import dev.mcrecon.manifest.LoggingConfiguration
+import dev.mcrecon.manifest.ManifestParser
 import dev.mcrecon.manifest.ManifestArgument
 import dev.mcrecon.manifest.rules.Rule
 import dev.mcrecon.manifest.rules.RuleAction
@@ -100,6 +101,27 @@ class LaunchBuildersTest {
                 },
             )
         }
+    }
+
+    @Test
+    fun `asset index placeholder uses typed logical id rather than legacy assets field`() {
+        val manifest = ManifestParser().read(Path.of("fixtures/synthetic-asset-index-999.json"))
+        val original = resolvedVersion(temporaryDirectory.resolve("asset-id"), arguments = manifest.arguments)
+        val runtimeRoot = temporaryDirectory.resolve("asset-id/runtime-999")
+        val version = original.copy(
+            manifest = manifest,
+            assetIndex = original.assetIndex.copy(metadata = manifest.assetIndex, runtimeRoot = runtimeRoot),
+        )
+
+        val preparation = ClientLaunchBuilder(CacheLayout(temporaryDirectory.resolve("asset-id"))).build(
+            version,
+            JavaRuntime(temporaryDirectory.resolve("java"), 25, "test"),
+            ClientLaunchOptions(temporaryDirectory.resolve("game-999"), ClientLaunchBuilder.DEMO_SESSION, demo = true),
+        )
+
+        val argumentsByName = preparation.specification.gameArguments.windowed(2).associate { it[0] to it[1] }
+        assertEquals("999", argumentsByName.getValue("--assetIndex"))
+        assertEquals(runtimeRoot.toAbsolutePath().normalize().toString(), argumentsByName.getValue("--assetsDir"))
     }
 
     @Test

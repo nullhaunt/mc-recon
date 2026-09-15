@@ -4,13 +4,16 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 
-class GradleProjectGenerator {
+class GradleProjectGenerator(
+    private val intelliJGenerator: IntelliJProjectGenerator = IntelliJProjectGenerator(),
+) {
     fun generate(plan: WorkspacePlan, root: Path) {
         write(root.resolve("settings.gradle.kts"), settings(plan))
         write(root.resolve("build.gradle.kts"), build(plan))
         write(root.resolve("gradle.properties"), gradleProperties())
         write(root.resolve("README.md"), readme(plan))
         write(root.resolve(".gitignore"), gitignore())
+        intelliJGenerator.generate(plan, root)
     }
 
     fun settings(plan: WorkspacePlan): String =
@@ -36,8 +39,8 @@ class GradleProjectGenerator {
                 toolchain {
                     languageVersion.set(JavaLanguageVersion.of($java))
                 }
-                sourceCompatibility = JavaVersion.VERSION_25
-                targetCompatibility = JavaVersion.VERSION_25
+                sourceCompatibility = JavaVersion.toVersion($java)
+                targetCompatibility = JavaVersion.toVersion($java)
             }
 
             sourceSets {
@@ -137,8 +140,8 @@ class GradleProjectGenerator {
 
         ## Build and run
 
-        Java 25 is required. The pinned Gradle 9.1.0 wrapper is the first Gradle release with
-        supported Java 25 execution and toolchains.
+        Java ${plan.manifest.javaVersion.majorVersion} is required. The pinned Gradle 9.1.0 wrapper
+        supports the manifest-selected Java toolchain used by this workspace.
 
         Windows:
 
@@ -156,9 +159,17 @@ class GradleProjectGenerator {
         ./gradlew runClient
         ```
 
-        Open this directory as a Gradle project in IntelliJ IDEA. Editable Java is in
-        `src/main/java`, client JAR resources are in `src/main/resources`, and the isolated game
-        directory is `run/client`.
+        Open this directory as a Gradle project in IntelliJ IDEA. The shared `Minecraft Client`
+        Application configuration runs and debugs the imported main module directly, so breakpoints
+        attach to the Minecraft JVM executing workspace classes. `Minecraft Client (Gradle)` invokes
+        `runClient` as a parity fallback. Editable Java is in `src/main/java`, client JAR resources
+        are in `src/main/resources`, and the isolated game directory is `run/client`.
+
+        The only generated IntelliJ metadata is the two portable project-file configurations under
+        `.idea/runConfigurations/`; local IDE state such as `workspace.xml` remains ignored. The
+        Application configuration intentionally omits Mojang's manifest `-cp` pair because IntelliJ
+        supplies the imported module runtime classpath, whose outputs precede the exact external
+        dependencies. The original Mojang client JAR is never on that classpath.
 
         `runClient` defaults to the same synthetic unauthenticated demo mode as mc-recon's proven
         launcher. Optional session values can be supplied ephemerally with `MC_RECON_USERNAME`,
@@ -191,7 +202,11 @@ class GradleProjectGenerator {
         .gradle/
         build/
         out/
-        .idea/
+        .idea/*
+        !.idea/runConfigurations/
+        .idea/runConfigurations/*
+        !.idea/runConfigurations/Minecraft_Client.xml
+        !.idea/runConfigurations/Minecraft_Client_Gradle.xml
         *.iml
         run/
         .mc-recon/

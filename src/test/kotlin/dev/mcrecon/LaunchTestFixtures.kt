@@ -64,6 +64,8 @@ internal fun resolvedVersion(
             manifest.assetIndex,
             indexFile,
             AssetIndexDocument(emptyMap(), null, null, ObjectMapper().createObjectNode()),
+            root.resolve("assets/runtime/test"),
+            root.resolve("assets/objects"),
         ),
         emptyMap(),
         emptyMap(),

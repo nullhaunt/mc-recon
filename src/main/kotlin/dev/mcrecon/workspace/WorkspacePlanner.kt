@@ -177,7 +177,7 @@ class WorkspacePlanner(
     ): LaunchSpecification {
         val replacements = linkedMapOf(
             gameDirectory.toAbsolutePath().normalize().toString() to WorkspacePlaceholders.GAME_DIRECTORY,
-            cacheLayout.assetsRoot().toAbsolutePath().normalize().toString() to WorkspacePlaceholders.ASSETS_ROOT,
+            resolved.assetIndex.runtimeRoot.toAbsolutePath().normalize().toString() to WorkspacePlaceholders.ASSETS_ROOT,
             nativesDirectory.toAbsolutePath().normalize().toString() to WorkspacePlaceholders.NATIVES_DIRECTORY,
             RESERVED_USERNAME to WorkspacePlaceholders.USERNAME,
             ClientLaunchBuilder.normalizeUuid(RESERVED_UUID) to WorkspacePlaceholders.UUID,

@@ -20,7 +20,7 @@ class GradleProjectGeneratorTest {
 
         assertEquals(first, second)
         assertContains(first, "languageVersion.set(JavaLanguageVersion.of(25))")
-        assertContains(first, "sourceCompatibility = JavaVersion.VERSION_25")
+        assertContains(first, "sourceCompatibility = JavaVersion.toVersion(25)")
         assertContains(first, "resources.setSrcDirs(listOf(\"src/main/resources\"))")
         assertContains(first, "options.compilerArgs.addAll(listOf(\"-proc:none\", \"-parameters\"))")
         assertContains(first, "tasks.register<JavaExec>(\"runClient\")")

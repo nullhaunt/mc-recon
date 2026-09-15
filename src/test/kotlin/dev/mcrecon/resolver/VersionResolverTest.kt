@@ -1,11 +1,19 @@
 package dev.mcrecon.resolver
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import dev.mcrecon.manifest.AssetIndex
+import dev.mcrecon.manifest.Download
+import dev.mcrecon.manifest.JavaVersion
+import dev.mcrecon.manifest.VersionManifest
+import dev.mcrecon.manifest.VersionType
 import dev.mcrecon.manifest.ManifestParser
 import dev.mcrecon.manifest.rules.Architecture
 import dev.mcrecon.manifest.rules.HostPlatform
 import dev.mcrecon.manifest.rules.OperatingSystem
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import java.net.URI
+import java.time.OffsetDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -60,6 +68,74 @@ class VersionResolverTest {
             assertEquals(1, server.hits("native-64.jar"))
         }
     }
+
+    @Test
+    fun `same logical asset id with changed artifact identity uses independent cache paths`() {
+        val firstIndex = "{\"objects\":{},\"map_to_resources\":false}".toByteArray()
+        val secondIndex = "{\"objects\":{},\"map_to_resources\":true}".toByteArray()
+        val client = "client".toByteArray()
+        val dedicatedServer = "server".toByteArray()
+        TestHttpServer().use { server ->
+            server.serve("client.jar", client)
+            server.serve("server.jar", dedicatedServer)
+            server.serve("first-index.json", firstIndex)
+            server.serve("second-index.json", secondIndex)
+            val first = versionManifest("asset-reuse-a", "34", firstIndex, server.baseUri.resolve("first-index.json"), client, dedicatedServer, server.baseUri)
+            val second = versionManifest("asset-reuse-b", "34", secondIndex, server.baseUri.resolve("second-index.json"), client, dedicatedServer, server.baseUri)
+            val layout = CacheLayout(temporaryDirectory.resolve("identity-cache"))
+            val platform = HostPlatform(OperatingSystem.WINDOWS, Architecture.X86_64, "10.0")
+            val resolver = VersionResolver(layout)
+
+            val firstResolved = resolver.resolve(first, platform)
+            val secondResolved = resolver.resolve(second, platform)
+
+            assertEquals("34", firstResolved.assetIndex.metadata.id)
+            assertEquals("34", secondResolved.assetIndex.metadata.id)
+            assertEquals(sha1(firstIndex), firstResolved.assetIndex.file.request.expectedSha1)
+            assertEquals(sha1(secondIndex), secondResolved.assetIndex.file.request.expectedSha1)
+            assertEquals(firstIndex.size.toLong(), firstResolved.assetIndex.metadata.size)
+            assertEquals(secondIndex.size.toLong(), secondResolved.assetIndex.metadata.size)
+            assertEquals(server.baseUri.resolve("first-index.json"), firstResolved.assetIndex.metadata.url)
+            assertEquals(server.baseUri.resolve("second-index.json"), secondResolved.assetIndex.metadata.url)
+            assertTrue(firstResolved.assetIndex.file.path != secondResolved.assetIndex.file.path)
+            assertTrue(firstResolved.assetIndex.runtimeRoot != secondResolved.assetIndex.runtimeRoot)
+            assertTrue(java.nio.file.Files.isRegularFile(firstResolved.assetIndex.file.path))
+            assertTrue(java.nio.file.Files.isRegularFile(secondResolved.assetIndex.file.path))
+            assertEquals(layout.assetObjectStoreRoot(), firstResolved.assetIndex.objectStoreRoot)
+            assertEquals(layout.assetObjectStoreRoot(), secondResolved.assetIndex.objectStoreRoot)
+        }
+    }
+
+    private fun versionManifest(
+        version: String,
+        assetId: String,
+        assetBytes: ByteArray,
+        assetUrl: URI,
+        clientBytes: ByteArray,
+        serverBytes: ByteArray,
+        baseUri: URI,
+    ): VersionManifest = VersionManifest(
+        version,
+        VersionType.SNAPSHOT,
+        OffsetDateTime.parse("2026-01-01T00:00:00Z"),
+        OffsetDateTime.parse("2026-01-01T00:00:00Z"),
+        mapOf(
+            "client" to Download(sha1(clientBytes), clientBytes.size.toLong(), baseUri.resolve("client.jar")),
+            "server" to Download(sha1(serverBytes), serverBytes.size.toLong(), baseUri.resolve("server.jar")),
+        ),
+        AssetIndex(assetId, sha1(assetBytes), assetBytes.size.toLong(), 0, assetUrl),
+        assetId,
+        JavaVersion("java-runtime-test", 25),
+        emptyList(),
+        mapOf("jvm" to emptyList(), "game" to emptyList()),
+        emptyMap(),
+        "example.Main",
+        null,
+        null,
+        null,
+        null,
+        ObjectMapper().createObjectNode(),
+    )
 
     private class TestContent(private val server: TestHttpServer) {
         private val client = "client".toByteArray()
